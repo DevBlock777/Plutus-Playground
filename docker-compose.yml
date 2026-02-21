@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  plutus-runner:
+    image: plutus-runner        # ton image existante, ne pas changer
+    container_name: plutus-runner
+    restart: unless-stopped
+    volumes:
+      - /home/dakdak/code/PLUTUS-PLAYGROUND/backend/workspaces:/app/code/wspace/lecture
+      - /home/dakdak/code/PLUTUS-PLAYGROUND/backend/assets:/app/code/wspace/assets
+    # Garde le container vivant s'il n'a pas de commande par défaut
+    tty: true
+    stdin_open: true

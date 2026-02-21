@@ -9,3 +9,20 @@ export function extractModuleName(code) {
     }
     return "Main"; // Valeur par défaut si non trouvé
 }
+
+
+
+/**
+ * Envoie des données au format Server-Sent Events avec un type
+ * @param {Response} res - L'objet réponse Express
+ * @param {string} data - Le contenu à envoyer
+ * @param {string} type - 'compilation', 'stdout' ou 'cbor'
+ */
+export function sendSSE(res, data, type = 'stdout') {
+    res.write(`data: ${JSON.stringify({ type: type, output: data })}\n\n`);
+}
+
+export function endSSE(res) {
+    res.write('event: done\ndata: {}\n\n');
+    res.end();
+}
