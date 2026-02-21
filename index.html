@@ -1,9 +1,17 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Plutus Architect IDE</title>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs/loader.js"></script>
+    <!-- Lucid chargé comme ES module et exposé en globale -->
+    <script type="module">
+        import { Lucid, Blockfrost } from "https://unpkg.com/lucid-cardano@0.10.11/web/mod.js";
+        window.Lucid      = Lucid;
+        window.Blockfrost = Blockfrost;
+        window._lucidReady = true;
+        window.dispatchEvent(new Event('lucid-ready'));
+    </script>
     <style>
         :root { --bg: #1e1e1e; --panel: #252526; --border: #333; --accent: #7c3aed; }
         body, html { margin:0; padding:0; height:100vh; background:var(--bg); color:#d4d4d4; font-family:'Segoe UI',sans-serif; overflow:hidden; }
@@ -12,12 +20,13 @@
         /* Toolbar */
         .toolbar {
             height:50px; background:#1a1a24; display:flex; align-items:center;
-            padding:0 16px; gap:10px; border-bottom:1px solid #2d2d3d; flex-shrink:0;
+            padding:0 16px; gap:8px; border-bottom:1px solid #2d2d3d; flex-shrink:0;
         }
-        .logo-small { font-size:16px; font-weight:800; color:#7c3aed; margin-right:6px; }
+        .logo-small { font-size:16px; font-weight:800; color:#7c3aed; margin-right:4px; flex-shrink:0; }
         .toolbar button {
             background:var(--accent); color:white; border:none;
-            padding:7px 14px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:12px;
+            padding:7px 12px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:12px;
+            flex-shrink:0; white-space:nowrap;
         }
         .toolbar button:hover:not(:disabled) { background:#6d28d9; }
         .toolbar button:disabled { background:#3a3a3a; color:#666; cursor:not-allowed; }
@@ -25,14 +34,27 @@
         .toolbar button.sec:hover:not(:disabled) { background:#383850; }
         .toolbar button.run-file { background:#064e3b; }
         .toolbar button.run-file:hover:not(:disabled) { background:#065f46; }
-        #activeFile { font-size:12px; color:#a78bfa; font-family:monospace; }
-        #statusEl { font-size:12px; color:#888; }
-        .sep { width:1px; height:24px; background:#2d2d3d; margin:0 4px; }
-        .spacer { flex:1; }
+        /* Wallet button states */
+        #connectWalletBtn { max-width:200px; overflow:hidden; text-overflow:ellipsis; }
+        #connectWalletBtn.connected { background:#065f46; }
+        #connectWalletBtn.connected:hover { background:#7f1d1d; }
+        #connectWalletBtn.connected:hover::after { content:' (disconnect)'; font-size:10px; }
+
+        #validatorNameInput {
+            background:#2d2d3d; border:1px solid #3a3a5c; color:#ddd;
+            padding:6px 10px; border-radius:4px; font-family:monospace; font-size:12px;
+            width:150px; flex-shrink:0; outline:none;
+        }
+        #validatorNameInput:focus { border-color:var(--accent); }
+        #validatorNameInput::placeholder { color:#555; }
+        #activeFile { font-size:12px; color:#a78bfa; font-family:monospace; flex-shrink:0; }
+        #statusEl { font-size:12px; color:#888; flex-shrink:0; }
+        .sep { width:1px; height:24px; background:#2d2d3d; margin:0 2px; flex-shrink:0; }
+        .spacer { flex:1; min-width:0; }
 
         /* User badge */
         .user-badge {
-            display:flex; align-items:center; gap:8px;
+            display:flex; align-items:center; gap:8px; flex-shrink:0;
             background:#2d2d3d; border-radius:20px; padding:4px 12px 4px 8px;
             font-size:12px; color:#a78bfa;
         }
@@ -40,11 +62,12 @@
             width:22px; height:22px; border-radius:50%;
             background:linear-gradient(135deg,#7c3aed,#06b6d4);
             display:flex; align-items:center; justify-content:center;
-            font-size:11px; font-weight:bold; color:white;
+            font-size:11px; font-weight:bold; color:white; flex-shrink:0;
         }
         .logout-btn {
             background:none !important; border:none; color:#555 !important;
-            cursor:pointer; font-size:14px; padding:0 0 0 6px !important;
+            cursor:pointer; font-size:12px; padding:0 0 0 6px !important;
+            white-space:nowrap;
         }
         .logout-btn:hover { color:#fc8181 !important; }
 
@@ -53,7 +76,7 @@
 
         /* Sidebar */
         .sidebar {
-            width:240px; background:#16161f; border-right:1px solid #2d2d3d;
+            width:220px; background:#16161f; border-right:1px solid #2d2d3d;
             display:flex; flex-direction:column; flex-shrink:0;
         }
         .sidebar-header {
@@ -88,29 +111,72 @@
         .file-list::-webkit-scrollbar { width:4px; }
         .file-list::-webkit-scrollbar-thumb { background:#2d2d3d; }
 
-        /* Editor */
+        /* Editor zone */
         .editor-zone { flex:1; display:flex; flex-direction:column; min-width:0; }
         #editor { flex:2; border-bottom:2px solid #111; min-height:0; }
 
-        /* Results */
-        .results { flex:1; display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px; background:#111; min-height:0; }
+        /* Results — 4 panels */
+        .results {
+            flex:1; display:grid;
+            grid-template-columns: 1.3fr 0.7fr 1fr 1fr;
+            gap:1px; background:#111; min-height:0;
+        }
         .panel { background:#16161f; display:flex; flex-direction:column; min-height:0; }
         .panel-header {
             background:#1a1a24; padding:7px 12px; font-size:10px;
             text-transform:uppercase; color:#ffffff; border-bottom:1px solid #222;
-            flex-shrink:0; letter-spacing:1px;
+            flex-shrink:0; letter-spacing:1px; display:flex; align-items:center; gap:6px;
         }
+        .panel-header .hint { font-size:9px; color:#444; text-transform:none; letter-spacing:0; }
         .panel-content {
             flex:1; overflow-y:auto; padding:12px;
             font-family:'Consolas',monospace; font-size:12px;
             white-space:pre-wrap; word-break:break-all; line-height:1.5;
         }
-        .comp-log { color:#85d7ff; }
-        .std-log  { color:#86efac; }
-        .cbor-log { color:#fbbf24; cursor:pointer; }
-        .cbor-log:hover { opacity:0.85; }
+        .comp-log  { color:#85d7ff; }
+        .std-log   { color:#86efac; }
+        .cbor-log  { color:#fbbf24; }
+
+        /* All output panels are clickable to copy */
+        .panel-content.copyable { cursor:pointer; position:relative; }
+        .panel-content.copyable:hover { background:#1a1a2a; }
+
+        /* "Copied ✓" overlay that flashes on click */
+        .copy-flash {
+            position:absolute; inset:0;
+            display:flex; align-items:center; justify-content:center;
+            background:rgba(52,211,153,0.08);
+            border:1px solid rgba(52,211,153,0.25);
+            border-radius:0;
+            color:#34d399;
+            font-family:'Consolas',monospace;
+            font-size:14px; font-weight:700;
+            letter-spacing:2px;
+            pointer-events:none;
+            opacity:0;
+            transition:opacity 0.1s;
+            z-index:10;
+        }
+        .copy-flash.show { opacity:1; }
+        .copy-flash.hide { opacity:0; transition:opacity 0.4s ease-out; }
         .panel-content::-webkit-scrollbar { width:4px; }
         .panel-content::-webkit-scrollbar-thumb { background:#2d2d3d; }
+
+        /* Address panel */
+        .addr-body { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:14px; }
+        .addr-block { display:flex; flex-direction:column; gap:5px; }
+        .addr-label { font-size:9px; letter-spacing:1px; text-transform:uppercase; color:#555; font-family:'Segoe UI',sans-serif; }
+        .addr-value {
+            font-family:'Consolas',monospace; font-size:11px; line-height:1.5;
+            word-break:break-all; padding:7px 9px; border-radius:4px;
+            border:1px solid #2d2d3d; background:#111118;
+            cursor:pointer; transition:border-color 0.15s;
+        }
+        .addr-value:hover:not(.empty) { border-color:#7c3aed; }
+        .addr-value.validator { color:#a78bfa; }
+        .addr-value.wallet    { color:#06b6d4; }
+        .addr-value.empty     { color:#333; font-style:italic; cursor:default; border-color:transparent; background:transparent; }
+        .copy-ok { font-size:10px; color:#34d399; min-height:14px; font-family:'Segoe UI',sans-serif; }
 
         /* Modal */
         .modal-overlay {
@@ -133,11 +199,64 @@
         .modal-hint { font-size:10px; color:#444; }
         .modal-actions { display:flex; justify-content:flex-end; gap:8px; }
         .modal-actions button { padding:7px 18px; font-size:12px; border-radius:4px; border:none; cursor:pointer; color:white; font-weight:bold; }
-        .modal-actions .cancel { background:#2d2d3d; }
+        .modal-actions .cancel  { background:#2d2d3d; }
         .modal-actions .confirm { background:var(--accent); }
+
+        /* ── Toast notifications ── */
+        #toastContainer {
+            position:fixed; top:64px; right:20px; z-index:9999;
+            display:flex; flex-direction:column; gap:10px;
+            pointer-events:none;
+        }
+        .toast {
+            pointer-events:all;
+            display:flex; align-items:flex-start; gap:12px;
+            min-width:280px; max-width:380px;
+            background:#1e1e2e;
+            border:1px solid #2d2d3d;
+            border-left:3px solid #7c3aed;
+            border-radius:8px;
+            padding:13px 14px;
+            box-shadow:0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+            font-family:'Segoe UI',sans-serif;
+            animation: toastIn 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
+        }
+        .toast.removing { animation: toastOut 0.18s ease-in forwards; }
+        .toast.type-error { border-left-color:#f87171; }
+        .toast.type-warn  { border-left-color:#fbbf24; }
+        .toast.type-ok    { border-left-color:#34d399; }
+        .toast.type-info  { border-left-color:#7c3aed; }
+        .toast-icon { font-size:16px; flex-shrink:0; margin-top:1px; }
+        .toast-body { flex:1; min-width:0; }
+        .toast-title {
+            font-size:11px; font-weight:700; letter-spacing:0.8px;
+            text-transform:uppercase; margin-bottom:4px;
+        }
+        .toast.type-error .toast-title { color:#f87171; }
+        .toast.type-warn  .toast-title { color:#fbbf24; }
+        .toast.type-ok    .toast-title { color:#34d399; }
+        .toast.type-info  .toast-title { color:#a78bfa; }
+        .toast-msg { font-size:12px; color:#9ca3af; line-height:1.5; word-break:break-word; }
+        .toast-close {
+            background:none; border:none; color:#3a3a5c; cursor:pointer;
+            font-size:18px; line-height:1; padding:0; flex-shrink:0;
+            transition:color 0.15s; margin-top:-1px;
+        }
+        .toast-close:hover { color:#d4d4d4; }
+        @keyframes toastIn {
+            from { opacity:0; transform:translateX(20px) scale(0.97); }
+            to   { opacity:1; transform:translateX(0)    scale(1); }
+        }
+        @keyframes toastOut {
+            from { opacity:1; transform:translateX(0)    scale(1);    max-height:200px; }
+            to   { opacity:0; transform:translateX(20px) scale(0.95); max-height:0; padding:0; margin:0; }
+        }
     </style>
 </head>
 <body>
+
+<!-- Toast notification container -->
+<div id="toastContainer"></div>
 
 <div id="modalOverlay" class="modal-overlay">
     <div class="modal">
@@ -147,7 +266,7 @@
             <select id="modalDir"></select>
         </div>
         <div>
-            <label>file name </label>
+            <label>File name</label>
             <input id="modalName" type="text" placeholder="ex: MyValidator.hs" />
             <p class="modal-hint">Must start with an uppercase letter and end with .hs</p>
         </div>
@@ -161,26 +280,35 @@
 <div class="layout">
     <div class="toolbar">
         <span class="logo-small">⬡</span>
-        <!-- <button id="runEditorBtn">▶ RUN éditeur</button> -->
+
+        <!-- Wallet: shows short address when connected, click = disconnect -->
+        <button id="connectWalletBtn" onclick="handleWalletBtn()">⬡ Connect Wallet</button>
+
+        <div class="sep"></div>
+
+        <input id="validatorNameInput" type="text" placeholder="ex: mValidator" title="Name of your validator function (BuiltinData -> BuiltinData -> BuiltinData -> ())" />
         <button id="runFileBtn" class="run-file" disabled>▶ Compile</button>
+
         <div class="sep"></div>
         <button id="saveBtn" class="sec">💾 Save</button>
         <button id="newFileBtn" class="sec">＋ New</button>
         <div class="sep"></div>
         <span id="statusEl"></span>
         <span id="activeFile"></span>
+
         <div class="spacer"></div>
+
         <div class="user-badge">
             <div class="user-avatar" id="userAvatar">?</div>
             <span id="userLabel">Loading...</span>
-            <button class="logout-btn" onclick="logout()" title="Logout">Logout⏻</button>
+            <button class="logout-btn" onclick="logout()">⏻ Logout</button>
         </div>
     </div>
 
     <div class="body">
         <div class="sidebar">
             <div class="sidebar-header">
-                My workspace
+                My Workspace
                 <span>
                     <button class="ico-btn" onclick="openModal()" title="New file">＋</button>
                     <button class="ico-btn" onclick="refreshFiles()" title="Refresh">↻</button>
@@ -195,456 +323,644 @@
         <div class="editor-zone">
             <div id="editor"></div>
             <div class="results">
+
+                <!-- Panel 1 : GHC log -->
                 <div class="panel">
-                    <div class="panel-header">Compilation (GHC)</div>
-                    <div id="logs" class="panel-content comp-log"></div>
+                    <div class="panel-header">
+                        Compilation (GHC)
+                        <span class="hint">(click to copy)</span>
+                    </div>
+                    <div id="logs" class="panel-content comp-log copyable" onclick="copyPanel('logs')" title="Click to copy"></div>
                 </div>
+
+                <!-- Panel 2 : stdout -->
                 <div class="panel">
-                    <div class="panel-header">Output</div>
-                    <div id="std" class="panel-content std-log"></div>
+                    <div class="panel-header">
+                        Output
+                        <span class="hint">(click to copy)</span>
+                    </div>
+                    <div id="std" class="panel-content std-log copyable" onclick="copyPanel('std')" title="Click to copy"></div>
                 </div>
+
+                <!-- Panel 3 : CBOR -->
                 <div class="panel">
-                    <div class="panel-header">CBOR <span style="font-size:9px;color:#444;text-transform:none;">(cliquer = copier)</span></div>
-                    <div id="cbor" class="panel-content cbor-log" onclick="copyCBOR()"></div>
+                    <div class="panel-header">
+                        CBOR
+                        <span class="hint">(click to copy)</span>
+                    </div>
+                    <div id="cbor" class="panel-content cbor-log copyable" onclick="copyPanel('cbor')" title="Click to copy"></div>
                 </div>
-            </div>
-        </div>
-    </div>
-</div>
+
+                <!-- Panel 4 : Addresses -->
+                <div class="panel">
+                    <div class="panel-header">Addresses</div>
+                    <div class="addr-body">
+                        <div class="addr-block">
+                            <div class="addr-label">Validator address</div>
+                            <div id="validatorAddr"
+                                 class="addr-value validator empty"
+                                 onclick="copyAddr('validatorAddr')"
+                                 title="Click to copy">— compile to generate —</div>
+                        </div>
+                        <div class="addr-block">
+                            <div class="addr-label">Wallet address</div>
+                            <div id="walletAddr"
+                                 class="addr-value wallet empty"
+                                 onclick="copyAddr('walletAddr')"
+                                 title="Connect wallet first">— wallet not connected —</div>
+                        </div>
+                        <div class="copy-ok" id="copyOk"></div>
+                    </div>
+                </div>
+
+            </div><!-- /.results -->
+        </div><!-- /.editor-zone -->
+    </div><!-- /.body -->
+</div><!-- /.layout -->
 
 <script>
-    // ── STATE ──
-    let currentSidebarPath = "";
-    let selectedFilePath   = null;
-    let selectedFileName   = null;
-    let currentUsername    = "";
-    let allDirs = [];
+// ═══════════════════════════════════════════════════
+//  TOAST NOTIFICATIONS  (replaces all alert())
+// ═══════════════════════════════════════════════════
+function notify(message, type = 'info', duration = 5000) {
+    const icons  = { error:'⛔', warn:'⚠️', ok:'✓', info:'◈' };
+    const titles = { error:'Error', warn:'Warning', ok:'Success', info:'Notice' };
 
-    // ── INIT ──
-    require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs' }});
-    require(['vs/editor/editor.main'], function () {
+    const toast = document.createElement('div');
+    toast.className = `toast type-${type}`;
+    toast.innerHTML = `
+        <div class="toast-icon">${icons[type] || '◈'}</div>
+        <div class="toast-body">
+            <div class="toast-title">${titles[type] || type}</div>
+            <div class="toast-msg">${message.replace(/\n/g, '<br>')}</div>
+        </div>
+        <button class="toast-close" onclick="dismissToast(this.parentElement)">×</button>
+    `;
 
-        // ── Haskell language definition ──
-        monaco.languages.register({ id: 'haskell' });
+    const container = document.getElementById('toastContainer');
+    container.appendChild(toast);
 
-        monaco.languages.setMonarchTokensProvider('haskell', {
-            defaultToken: '',
-            tokenPostfix: '.hs',
+    if (duration > 0) {
+        setTimeout(() => dismissToast(toast), duration);
+    }
+    return toast;
+}
 
-            keywords: [
-                'case','class','data','default','deriving','do','else','foreign',
-                'if','import','in','infix','infixl','infixr','instance','let',
-                'module','newtype','of','then','type','where','qualified','as',
-                'hiding','forall','family','mdo','rec','proc'
+function dismissToast(toast) {
+    if (!toast || toast.classList.contains('removing')) return;
+    toast.classList.add('removing');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+}
+let currentSidebarPath = "";
+let selectedFilePath   = null;
+let selectedFileName   = null;
+let currentUsername    = "";
+let allDirs            = [];
+
+// Wallet state
+let lucidInstance = null;
+let walletAddress = null;
+
+// sessionStorage key — persists across reloads but NOT across tab-close
+const WALLET_KEY = 'plutus_wallet_name';
+
+// ═══════════════════════════════════════════════════
+//  MONACO INIT
+// ═══════════════════════════════════════════════════
+require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs' }});
+require(['vs/editor/editor.main'], function () {
+
+    // ── Haskell tokenizer ──
+    monaco.languages.register({ id: 'haskell' });
+    monaco.languages.setMonarchTokensProvider('haskell', {
+        defaultToken: '', tokenPostfix: '.hs',
+        keywords: ['case','class','data','default','deriving','do','else','foreign',
+            'if','import','in','infix','infixl','infixr','instance','let',
+            'module','newtype','of','then','type','where','qualified','as',
+            'hiding','forall','family','mdo','rec','proc'],
+        typeKeywords: ['Bool','Char','Double','Float','Int','Integer','IO','String',
+            'Maybe','Either','Ordering','Word','Void','Show','Eq','Ord',
+            'Num','Enum','Bounded','Read','Functor','Monad','Applicative',
+            'Foldable','Traversable','Semigroup','Monoid'],
+        operators: ['=','->','<-','::','=>','..','|','\\','@','~',
+            '+','-','*','/','<','>','<=','>=','==','/=',
+            '&&','||','>>','>>=','<$>','<*>','<|>','$','.',':'],
+        symbols:  /[=><!~?:&|+\-*\/\^%@#.\\]+/,
+        escapes:  /\\(?:[nrtfb\\"'&]|[0-9]+|x[0-9a-fA-F]+|o[0-7]+)/,
+        tokenizer: {
+            root: [
+                [/\{-#.*?#-\}/, 'keyword.pragma'],
+                [/\{-/, 'comment', '@blockComment'],
+                [/--.*$/, 'comment'],
+                [/"/, 'string', '@string'],
+                [/'[^\\']'/, 'string'],
+                [/(')(@escapes)(')/, ['string','string.escape','string']],
+                [/0[xX][0-9a-fA-F]+/, 'number.hex'],
+                [/[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?/, 'number.float'],
+                [/[0-9]+/, 'number'],
+                [/[A-Z][a-zA-Z0-9_']*/, { cases: { '@typeKeywords': 'type.keyword', '@default': 'type' } }],
+                [/[a-z_][a-zA-Z0-9_']*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+                [/@symbols/, { cases: { '@operators': 'operator', '@default': 'operator' } }],
+                [/[{}()\[\]]/, 'delimiter'], [/[,;]/, 'delimiter'], [/\s+/, 'white'],
             ],
-            typeKeywords: [
-                'Bool','Char','Double','Float','Int','Integer','IO','String',
-                'Maybe','Either','Ordering','Word','Void','Show','Eq','Ord',
-                'Num','Enum','Bounded','Read','Functor','Monad','Applicative',
-                'Foldable','Traversable','Semigroup','Monoid'
+            blockComment: [
+                [/[^{-]+/, 'comment'], [/\{-/, 'comment', '@push'],
+                [/-\}/, 'comment', '@pop'], [/[{-]/, 'comment'],
             ],
-            operators: [
-                '=','->','<-','::','=>','..','|','\\','@','~',
-                '+','-','*','/','<','>','<=','>=','==','/=',
-                '&&','||','>>','>>=','<$>','<*>','<|>','$','.',':'
+            string: [
+                [/[^\\"]+/, 'string'], [/@escapes/, 'string.escape'],
+                [/\\./, 'string.escape.invalid'], [/"/, 'string', '@pop'],
             ],
-            symbols: /[=><!~?:&|+\-*\/\^%@#.\\]+/,
-            escapes: /\\(?:[nrtfb\\"'&]|[0-9]+|x[0-9a-fA-F]+|o[0-7]+)/,
-
-            tokenizer: {
-                root: [
-                    // Pragmas
-                    [/\{-#.*?#-\}/, 'keyword.pragma'],
-
-                    // Block comments
-                    [/\{-/, 'comment', '@blockComment'],
-
-                    // Line comments
-                    [/--.*$/, 'comment'],
-
-                    // String literals
-                    [/"/, 'string', '@string'],
-
-                    // Char literals
-                    [/'[^\\']'/, 'string'],
-                    [/(')(@escapes)(')/, ['string','string.escape','string']],
-
-                    // Numbers
-                    [/0[xX][0-9a-fA-F]+/, 'number.hex'],
-                    [/[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?/, 'number.float'],
-                    [/[0-9]+/, 'number'],
-
-                    // Type constructors and module names (start with uppercase)
-                    [/[A-Z][a-zA-Z0-9_']*/, {
-                        cases: {
-                            '@typeKeywords': 'type.keyword',
-                            '@default': 'type'
-                        }
-                    }],
-
-                    // Keywords and identifiers
-                    [/[a-z_][a-zA-Z0-9_']*/, {
-                        cases: {
-                            '@keywords': 'keyword',
-                            '@default': 'identifier'
-                        }
-                    }],
-
-                    // Operators
-                    [/@symbols/, {
-                        cases: {
-                            '@operators': 'operator',
-                            '@default': 'operator'
-                        }
-                    }],
-
-                    // Delimiters
-                    [/[{}()\[\]]/, 'delimiter'],
-                    [/[,;]/, 'delimiter'],
-
-                    // Whitespace
-                    [/\s+/, 'white'],
-                ],
-
-                blockComment: [
-                    [/[^{-]+/, 'comment'],
-                    [/\{-/, 'comment', '@push'],
-                    [/-\}/, 'comment', '@pop'],
-                    [/[{-]/, 'comment'],
-                ],
-
-                string: [
-                    [/[^\\"]+/, 'string'],
-                    [/@escapes/, 'string.escape'],
-                    [/\\./, 'string.escape.invalid'],
-                    [/"/, 'string', '@pop'],
-                ],
-            }
-        });
-
-        // ── Custom dark theme with Haskell colours ──
-        monaco.editor.defineTheme('haskell-dark', {
-            base: 'vs-dark',
-            inherit: true,
-            rules: [
-                { token: 'keyword',        foreground: 'c792ea', fontStyle: 'bold' },
-                { token: 'keyword.pragma', foreground: '546e7a', fontStyle: 'italic' },
-                { token: 'type',           foreground: 'ffcb6b' },
-                { token: 'type.keyword',   foreground: 'ffcb6b', fontStyle: 'bold' },
-                { token: 'comment',        foreground: '546e7a', fontStyle: 'italic' },
-                { token: 'string',         foreground: 'c3e88d' },
-                { token: 'string.escape',  foreground: '89ddff' },
-                { token: 'number',         foreground: 'f78c6c' },
-                { token: 'number.float',   foreground: 'f78c6c' },
-                { token: 'number.hex',     foreground: 'f78c6c' },
-                { token: 'operator',       foreground: '89ddff' },
-                { token: 'delimiter',      foreground: '89ddff' },
-                { token: 'identifier',     foreground: 'eeffff' },
-            ],
-            colors: {
-                'editor.background':           '#1a1a24',
-                'editor.foreground':           '#eeffff',
-                'editorLineNumber.foreground': '#3a3a5c',
-                'editorLineNumber.activeForeground': '#7c3aed',
-                'editor.lineHighlightBackground': '#1e1e30',
-                'editorCursor.foreground':     '#c792ea',
-                'editor.selectionBackground':  '#3a2d6a',
-                'editorIndentGuide.background':'#2d2d3d',
-                'editorGutter.background':     '#16161f',
-            }
-        });
-
-        window.editor = monaco.editor.create(document.getElementById('editor'), {
-            value: "-- Select or create a file in the sidebar\n",
-            language: 'haskell',
-            theme: 'haskell-dark',
-            automaticLayout: true,
-            fontSize: 14,
-            minimap: { enabled: false },
-            scrollbar: { vertical: 'visible' },
-            renderLineHighlight: 'line',
-            bracketPairColorization: { enabled: true },
-            'semanticHighlighting.enabled': true,
-        });
-
-        // ── GHC error parser → Monaco markers ──
-        // Called after each compilation with the full log text
-        window.setGHCMarkers = function(logText) {
-            const model = window.editor.getModel();
-            if (!model) return;
-
-            const markers = [];
-            // GHC format: "filename:line:col: error:" or "filename:line:col-col: error:"
-            const pattern = /^.*?:(\d+):(\d+)(?:-\d+)?:\s*(error|warning):\s*([\s\S]*?)(?=\n\S|\n\n|$)/gm;
-            let match;
-            while ((match = pattern.exec(logText)) !== null) {
-                const line    = parseInt(match[1], 10);
-                const col     = parseInt(match[2], 10);
-                const sev     = match[3];
-                const msg     = match[4].trim().replace(/\n\s+/g, ' ');
-                markers.push({
-                    startLineNumber: line,
-                    startColumn:     col,
-                    endLineNumber:   line,
-                    endColumn:       col + 1,
-                    message:         msg,
-                    severity: sev === 'error'
-                        ? monaco.MarkerSeverity.Error
-                        : monaco.MarkerSeverity.Warning,
-                });
-            }
-            monaco.editor.setModelMarkers(model, 'ghc', markers);
-        };
-
-        // Charge le username depuis la session (SSR : simple GET)
-        fetch('/auth/me')
-            .then(r => {
-                // Si le cookie de session est absent/expiré, le serveur
-                // a déjà redirigé vers /login avant même qu'on arrive ici.
-                // Ce cas ne devrait donc pas arriver, mais par sécurité :
-                if (!r.ok) return window.location.href = '/login';
-                return r.json();
-            })
-            .then(data => {
-                if (!data) return;
-                currentUsername = data.username;
-                document.getElementById('userLabel').textContent = data.username;
-                document.getElementById('userAvatar').textContent = data.username[0].toUpperCase();
-                refreshFiles();
-            })
-            .catch(() => window.location.href = '/login');
+        }
     });
 
-    // ── LOGOUT ──
-    async function logout() {
-        await fetch('/auth/logout', { method: 'POST' });
-        window.location.href = '/login';
-    }
-
-    // ── SIDEBAR ──
-    async function refreshFiles() {
-        try {
-            const r = await fetch(`/workspace/files?path=${encodeURIComponent(currentSidebarPath)}`);
-            if (r.status === 302 || r.redirected) return window.location.href = '/login';
-            const items = await r.json();
-
-            document.getElementById('sidebarPath').textContent =
-                `~/${currentUsername}${currentSidebarPath ? '/' + currentSidebarPath : ''}`;
-
-            items.filter(i => i.isDirectory).forEach(i => {
-                if (!allDirs.includes(i.fullPath)) allDirs.push(i.fullPath);
-            });
-
-            const sorted = [...items].sort((a, b) => {
-                if (a.isDirectory && !b.isDirectory) return -1;
-                if (!a.isDirectory && b.isDirectory) return 1;
-                return a.name.localeCompare(b.name);
-            });
-
-            let html = '';
-            if (currentSidebarPath !== '') {
-                html += `<div class="file-item back" onclick="sidebarGoBack()">📁 ..</div>`;
-            }
-            if (sorted.length === 0) {
-                html += `<div style="padding:14px 12px;font-size:11px;color:#444;font-style:italic;">No files — click ＋ to create one</div>`;
-            }
-            sorted.forEach(item => {
-                const icon = item.isDirectory ? '📁' : (item.name.endsWith('.hs') ? 'λ' : '📄');
-                const sp = item.fullPath.replace(/'/g, "\\'");
-                const sn = item.name.replace(/'/g, "\\'");
-                const action = item.isDirectory
-                    ? `sidebarNavigate('${sp}')`
-                    : `selectFile('${sp}', '${sn}')`;
-                const compileBtn = (!item.isDirectory && item.name.endsWith('.hs'))
-                    ? `<span class="compile-ico" onclick="event.stopPropagation();runWorkspaceFile('${sp}','${sn}')" title="Compiler">▶</span>`
-                    : '';
-                html += `<div class="file-item ${item.isDirectory ? 'is-dir' : ''} ${item.fullPath === selectedFilePath ? 'active' : ''}" onclick="${action}">
-                    <div class="file-item-label">${icon} ${item.name}</div>${compileBtn}
-                </div>`;
-            });
-            document.getElementById('fileList').innerHTML = html;
-        } catch (e) {
-            document.getElementById('fileList').innerHTML =
-                `<div style="padding:10px;color:#f44;font-size:11px;">Connection error</div>`;
+    // ── Theme ──
+    monaco.editor.defineTheme('haskell-dark', {
+        base: 'vs-dark', inherit: true,
+        rules: [
+            { token: 'keyword',        foreground: 'c792ea', fontStyle: 'bold' },
+            { token: 'keyword.pragma', foreground: '546e7a', fontStyle: 'italic' },
+            { token: 'type',           foreground: 'ffcb6b' },
+            { token: 'type.keyword',   foreground: 'ffcb6b', fontStyle: 'bold' },
+            { token: 'comment',        foreground: '546e7a', fontStyle: 'italic' },
+            { token: 'string',         foreground: 'c3e88d' },
+            { token: 'string.escape',  foreground: '89ddff' },
+            { token: 'number',         foreground: 'f78c6c' },
+            { token: 'operator',       foreground: '89ddff' },
+            { token: 'delimiter',      foreground: '89ddff' },
+            { token: 'identifier',     foreground: 'eeffff' },
+        ],
+        colors: {
+            'editor.background':                 '#1a1a24',
+            'editor.foreground':                 '#eeffff',
+            'editorLineNumber.foreground':       '#3a3a5c',
+            'editorLineNumber.activeForeground': '#7c3aed',
+            'editor.lineHighlightBackground':    '#1e1e30',
+            'editorCursor.foreground':           '#c792ea',
+            'editor.selectionBackground':        '#3a2d6a',
+            'editorGutter.background':           '#16161f',
         }
-    }
+    });
 
-    function sidebarNavigate(fp) { currentSidebarPath = fp; refreshFiles(); }
-    function sidebarGoBack() {
-        const parts = currentSidebarPath.split('/').filter(p => p);
-        parts.pop();
-        currentSidebarPath = parts.join('/');
-        refreshFiles();
-    }
+    window.editor = monaco.editor.create(document.getElementById('editor'), {
+        value: "-- Select or create a file in the sidebar\n",
+        language: 'haskell',
+        theme: 'haskell-dark',
+        automaticLayout: true,
+        fontSize: 14,
+        minimap: { enabled: false },
+        scrollbar: { vertical: 'visible' },
+        renderLineHighlight: 'line',
+        bracketPairColorization: { enabled: true },
+    });
 
-    async function selectFile(fullPath, fileName) {
-        try {
-            const r = await fetch(`/workspace/file?name=${encodeURIComponent(fullPath)}`);
-            if (!r.ok) throw new Error(await r.text());
-            window.editor.setValue(await r.text());
-            const ext = fileName.split('.').pop().toLowerCase();
-            monaco.editor.setModelLanguage(window.editor.getModel(), { hs: 'haskell', json: 'json', md: 'markdown' }[ext] || 'plaintext');
-            // Clear old GHC markers when switching files
-            monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
-            selectedFilePath = fullPath;
-            selectedFileName = fileName;
-            document.getElementById('activeFile').textContent = '> ' + fileName;
-            document.getElementById('runFileBtn').disabled = !fileName.endsWith('.hs');
+    // ── GHC markers ──
+    window.setGHCMarkers = function(logText) {
+        const model = window.editor.getModel();
+        if (!model) return;
+        const markers = [];
+        const pat = /^.*?:(\d+):(\d+)(?:-\d+)?:\s*(error|warning):\s*([\s\S]*?)(?=\n\S|\n\n|$)/gm;
+        let m;
+        while ((m = pat.exec(logText)) !== null) {
+            markers.push({
+                startLineNumber: +m[1], startColumn: +m[2],
+                endLineNumber:   +m[1], endColumn:   +m[2] + 1,
+                message:  m[4].trim().replace(/\n\s+/g, ' '),
+                severity: m[3] === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+            });
+        }
+        monaco.editor.setModelMarkers(model, 'ghc', markers);
+    };
+
+    // ── Auth check, then auto-reconnect wallet ──
+    fetch('/auth/me')
+        .then(r => { if (!r.ok) return window.location.href = '/login'; return r.json(); })
+        .then(data => {
+            if (!data) return;
+            currentUsername = data.username;
+            document.getElementById('userLabel').textContent  = data.username;
+            document.getElementById('userAvatar').textContent = data.username[0].toUpperCase();
             refreshFiles();
-        } catch (e) { alert('Error: ' + e.message); }
+            tryAutoReconnect(); // ← restore wallet session after reload
+        })
+        .catch(() => window.location.href = '/login');
+});
+
+// ═══════════════════════════════════════════════════
+//  WALLET
+// ═══════════════════════════════════════════════════
+
+/**
+ * On reload, silently re-enable the previously used wallet.
+ * Most wallets allow this without a user popup if the site is already approved.
+ */
+async function tryAutoReconnect() {
+    const saved = sessionStorage.getItem(WALLET_KEY);
+    if (!saved) return;
+    try {
+        await connectWallet(saved, /* silent */ true);
+    } catch (_) {
+        sessionStorage.removeItem(WALLET_KEY);
+    }
+}
+
+/**
+ * Connect (or re-connect silently) a Cardano wallet.
+ * @param {string|null} name    - 'nami' | 'lace' | 'eternl' | null = auto-detect
+ * @param {boolean}     silent  - suppress alerts (used for auto-reconnect on reload)
+ */
+async function connectWallet(name = null, silent = false) {
+    // Wait for Lucid ES module to finish loading (it's async)
+    if (!window._lucidReady) {
+        await new Promise(resolve => window.addEventListener('lucid-ready', resolve, { once: true }));
     }
 
-    // ── SAVE ──
-    document.getElementById('saveBtn').onclick = async () => {
-        if (!selectedFilePath) return alert("No file selected");
-        const r = await fetch('/workspace/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filePath: selectedFilePath, content: window.editor.getValue() })
-        });
-        if (r.ok) { setStatus('Saved ✓', '#34d399'); setTimeout(() => setStatus('', '#888'), 2000); }
-        else setStatus('Save error', '#f87171');
-    };
-
-    // ── MODAL CRÉATION ──
-    document.getElementById('newFileBtn').onclick = openModal;
-    function openModal() {
-        const sel = document.getElementById('modalDir');
-        sel.innerHTML = `<option value="">/ (racine)</option>`;
-        allDirs.forEach(d => { sel.innerHTML += `<option value="${d}">${d}/</option>`; });
-        document.getElementById('modalName').value = '';
-        document.getElementById('modalOverlay').classList.add('open');
-        setTimeout(() => document.getElementById('modalName').focus(), 100);
+    if (!window.cardano) {
+        if (!silent) notify("No Cardano wallet extension detected.\nPlease install Nami, Lace, or Eternl.", 'error');
+        return;
     }
-    function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
-    document.getElementById('modalOverlay').onclick = (e) => { if (e.target.id === 'modalOverlay') closeModal(); };
 
-    async function confirmCreate() {
-        const dir  = document.getElementById('modalDir').value;
-        const name = document.getElementById('modalName').value.trim();
-        if (!name) return alert("Enter a file name");
-        if (!name.endsWith('.hs')) return alert("The file must end with .hs");
-        if (!/^[A-Z]/.test(name)) return alert("The name must start with an uppercase letter");
-
-        const moduleName = name.replace('.hs', '');
-        const filePath   = dir ? `${dir}/${name}` : name;
-        const content    = `module ${moduleName} where\n\nimport PlutusTx qualified\nimport PlutusTx.Prelude\nimport PlutusLedgerApi.V2\n\n{-# INLINABLE mkValidator #-}\nmkValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()\nmkValidator _ _ _ = ()\n\nvalidatorScript :: Validator\nvalidatorScript = mkValidatorScript\n    $$(PlutusTx.compile [|| mkValidator ||])\n`;
-
-        const r = await fetch('/workspace/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filePath, content })
-        });
-        if (!r.ok) return alert('Error: ' + await r.text());
-        closeModal();
-        currentSidebarPath = dir;
-        await refreshFiles();
-        await selectFile(filePath, name);
+    // Auto-detect first available wallet
+    if (!name) {
+        if      (window.cardano.lace)   name = 'lace';
+        else if (window.cardano.nami)   name = 'nami';
+        else if (window.cardano.eternl) name = 'eternl';
+        else {
+            if (!silent) notify("No supported wallet found.\nPlease install Nami, Lace, or Eternl.", 'error');
+            return;
+        }
     }
-    document.getElementById('modalName').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') confirmCreate();
-        if (e.key === 'Escape') closeModal();
+
+    if (!window.cardano[name]) {
+        if (!silent) notify(`Wallet "${name}" not found.`, 'error');
+        sessionStorage.removeItem(WALLET_KEY);
+        return;
+    }
+
+    try {
+        const api = await window.cardano[name].enable();
+
+        lucidInstance = await Lucid.new(
+            new Blockfrost(
+                "https://cardano-preprod.blockfrost.io/api/v0",
+                "preprodYjRkHfcazNkL0xxG9C2RdUbUoTrG7wip"
+            ),
+            "Preprod"
+        );
+        lucidInstance.selectWallet(api);
+        walletAddress = await lucidInstance.wallet.address();
+
+        // Persist wallet name across reloads (sessionStorage: cleared on tab close)
+        sessionStorage.setItem(WALLET_KEY, name);
+
+        _updateWalletUI(walletAddress);
+
+        // If CBOR already compiled, recompute validator address now
+        const cbor = document.getElementById('cbor').textContent.trim();
+        if (cbor) _setValidatorAddr(_computeValidatorAddr(cbor));
+
+    } catch (e) {
+        if (!silent) notify("Wallet connection failed:\n" + e.message, 'error');
+        sessionStorage.removeItem(WALLET_KEY);
+    }
+}
+
+function disconnectWallet() {
+    lucidInstance = null;
+    walletAddress = null;
+    sessionStorage.removeItem(WALLET_KEY);
+
+    const btn = document.getElementById('connectWalletBtn');
+    btn.textContent = '⬡ Connect Wallet';
+    btn.title = '';
+    btn.classList.remove('connected');
+
+    const el = document.getElementById('walletAddr');
+    el.textContent = '— wallet not connected —';
+    el.classList.add('empty');
+    el.title = 'Connect wallet first';
+
+    // Validator address also depends on network; clear it
+    _setValidatorAddr(null);
+}
+
+function handleWalletBtn() {
+    if (walletAddress) disconnectWallet();
+    else connectWallet();
+}
+
+function _updateWalletUI(addr) {
+    const short = addr.slice(0, 14) + '…' + addr.slice(-6);
+    const btn   = document.getElementById('connectWalletBtn');
+    btn.textContent = '✓ ' + short;
+    btn.title = addr + '\n(click to disconnect)';
+    btn.classList.add('connected');
+
+    const el = document.getElementById('walletAddr');
+    el.textContent = addr;
+    el.classList.remove('empty');
+    el.title = 'Click to copy';
+}
+
+function _computeValidatorAddr(cborHex) {
+    if (!lucidInstance || !cborHex) return null;
+    try {
+        return lucidInstance.utils.validatorToAddress({ type: "PlutusV2", script: cborHex });
+    } catch (e) {
+        console.warn("Could not derive validator address:", e);
+        return null;
+    }
+}
+
+function _setValidatorAddr(addr) {
+    const el = document.getElementById('validatorAddr');
+    if (addr) {
+        el.textContent = addr;
+        el.classList.remove('empty');
+        el.title = 'Click to copy';
+    } else {
+        el.textContent = lucidInstance
+            ? '— compile to generate —'
+            : '— connect wallet to compute —';
+        el.classList.add('empty');
+    }
+}
+
+function copyAddr(id) {
+    const el   = document.getElementById(id);
+    if (el.classList.contains('empty')) return;
+    navigator.clipboard.writeText(el.textContent).then(() => {
+        const fb = document.getElementById('copyOk');
+        fb.textContent = 'Copied ✓';
+        setTimeout(() => { fb.textContent = ''; }, 1500);
     });
+}
 
-    // ── COMPILATION ──
-    // document.getElementById('runEditorBtn').onclick = () => runCode({ code: window.editor.getValue() });
-    document.getElementById('runFileBtn').onclick   = () => {
-        if (selectedFileName) runWorkspaceFile(selectedFilePath, selectedFileName);
-    };
+// ═══════════════════════════════════════════════════
+//  AUTH LOGOUT
+// ═══════════════════════════════════════════════════
+async function logout() {
+    sessionStorage.removeItem(WALLET_KEY);
+    await fetch('/auth/logout', { method: 'POST' });
+    window.location.href = '/login';
+}
 
-    function runWorkspaceFile(fullPath, fileName) {
-        if (fullPath === selectedFilePath) {
-            fetch('/workspace/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filePath: fullPath, content: window.editor.getValue() })
-            }).then(() => runCode({ fileName }));
-        } else {
-            runCode({ fileName });
-        }
-    }
+// ═══════════════════════════════════════════════════
+//  SIDEBAR
+// ═══════════════════════════════════════════════════
+async function refreshFiles() {
+    try {
+        const r = await fetch(`/workspace/files?path=${encodeURIComponent(currentSidebarPath)}`);
+        if (r.redirected || r.status === 401) return window.location.href = '/login';
+        const items = await r.json();
 
-    async function runCode(body) {
-        // document.getElementById('runEditorBtn').disabled = true;
-        document.getElementById('runFileBtn').disabled   = true;
-        setStatus('Compiling...', '#f0a500');
-        document.getElementById('logs').textContent = '';
-        document.getElementById('std').textContent  = '';
-        document.getElementById('cbor').textContent = '';
-        // Clear previous GHC markers
-        if (window.editor && window.setGHCMarkers) {
-            monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
-        }
+        document.getElementById('sidebarPath').textContent =
+            `~/${currentUsername}${currentSidebarPath ? '/' + currentSidebarPath : ''}`;
 
-        let hasError = false;
-        let fullLog  = '';  // accumulate full GHC output for marker parsing
-        try {
-            const response = await fetch('/run', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-
-            const reader  = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            function processLines(buf) {
-                const lines = buf.split('\n');
-                const remaining = lines.pop(); // last incomplete line
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    try {
-                        const { type, output } = JSON.parse(line.slice(6));
-                        if (type === 'compilation') {
-                            document.getElementById('logs').textContent += output;
-                            document.getElementById('logs').scrollTop = document.getElementById('logs').scrollHeight;
-                            fullLog += output;
-                            if (/^.*error:/.test(output) || output.includes('Build failed') || output.includes('exit code')) hasError = true;
-                        } else if (type === 'cbor') {
-                            document.getElementById('cbor').textContent = output;
-                        } else {
-                            document.getElementById('std').textContent += output;
-                            document.getElementById('std').scrollTop = document.getElementById('std').scrollHeight;
-                        }
-                    } catch (e) {}
-                }
-                return remaining;
-            }
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    // Flush any remaining buffered data
-                    if (buffer.trim()) processLines(buffer + '\n');
-                    // Parse GHC errors and show inline markers in editor
-                    if (window.setGHCMarkers) window.setGHCMarkers(fullLog);
-                    break;
-                }
-                buffer += decoder.decode(value, { stream: true });
-                buffer = processLines(buffer);
-            }
-            setStatus(hasError ? 'Build failed' : 'Success ✓', hasError ? '#f87171' : '#34d399');
-        } catch (e) {
-            document.getElementById('logs').textContent += `\nNetwork error: ${e.message}`;
-            setStatus('Network error', '#f87171');
-        }
-        // document.getElementById('runEditorBtn').disabled = false;
-        document.getElementById('runFileBtn').disabled   = !selectedFileName?.endsWith('.hs');
-    }
-
-    function setStatus(msg, color) {
-        document.getElementById('statusEl').textContent = msg;
-        document.getElementById('statusEl').style.color = color;
-    }
-    function copyCBOR() {
-        const text = document.getElementById('cbor').textContent;
-        if (!text) return;
-        navigator.clipboard.writeText(text).then(() => {
-            document.getElementById('cbor').style.outline = '1px solid #34d399';
-            setTimeout(() => document.getElementById('cbor').style.outline = '', 700);
+        items.filter(i => i.isDirectory).forEach(i => {
+            if (!allDirs.includes(i.fullPath)) allDirs.push(i.fullPath);
         });
+
+        const sorted = [...items].sort((a, b) => {
+            if (a.isDirectory && !b.isDirectory) return -1;
+            if (!a.isDirectory && b.isDirectory) return 1;
+            return a.name.localeCompare(b.name);
+        });
+
+        let html = '';
+        if (currentSidebarPath !== '')
+            html += `<div class="file-item back" onclick="sidebarGoBack()">📁 ..</div>`;
+        if (sorted.length === 0)
+            html += `<div style="padding:14px 12px;font-size:11px;color:#444;font-style:italic;">No files — click ＋ to create one</div>`;
+
+        sorted.forEach(item => {
+            const icon = item.isDirectory ? '📁' : (item.name.endsWith('.hs') ? 'λ' : '📄');
+            const sp   = item.fullPath.replace(/'/g, "\\'");
+            const sn   = item.name.replace(/'/g, "\\'");
+            const act  = item.isDirectory ? `sidebarNavigate('${sp}')` : `selectFile('${sp}','${sn}')`;
+            const cBtn = (!item.isDirectory && item.name.endsWith('.hs'))
+                ? `<span class="compile-ico" onclick="event.stopPropagation();runWorkspaceFile('${sp}','${sn}')" title="Compile">▶</span>`
+                : '';
+            html += `<div class="file-item ${item.isDirectory?'is-dir':''} ${item.fullPath===selectedFilePath?'active':''}" onclick="${act}">
+                <div class="file-item-label">${icon} ${item.name}</div>${cBtn}
+            </div>`;
+        });
+        document.getElementById('fileList').innerHTML = html;
+    } catch (e) {
+        document.getElementById('fileList').innerHTML =
+            `<div style="padding:10px;color:#f44;font-size:11px;">Connection error</div>`;
     }
+}
+
+function sidebarNavigate(fp) { currentSidebarPath = fp; refreshFiles(); }
+function sidebarGoBack() {
+    const parts = currentSidebarPath.split('/').filter(Boolean);
+    parts.pop();
+    currentSidebarPath = parts.join('/');
+    refreshFiles();
+}
+
+async function selectFile(fullPath, fileName) {
+    try {
+        const r = await fetch(`/workspace/file?name=${encodeURIComponent(fullPath)}`);
+        if (!r.ok) throw new Error(await r.text());
+        window.editor.setValue(await r.text());
+        const ext = fileName.split('.').pop().toLowerCase();
+        monaco.editor.setModelLanguage(window.editor.getModel(),
+            { hs:'haskell', json:'json', md:'markdown' }[ext] || 'plaintext');
+        monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
+        selectedFilePath = fullPath;
+        selectedFileName = fileName;
+        document.getElementById('activeFile').textContent = '> ' + fileName;
+        document.getElementById('runFileBtn').disabled = !fileName.endsWith('.hs');
+        refreshFiles();
+    } catch (e) { notify('Error opening file: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════
+//  SAVE
+// ═══════════════════════════════════════════════════
+document.getElementById('saveBtn').onclick = async () => {
+    if (!selectedFilePath) return notify("No file selected. Click a file in the sidebar first.", 'warn');
+    const r = await fetch('/workspace/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath: selectedFilePath, content: window.editor.getValue() })
+    });
+    if (r.ok) { setStatus('Saved ✓', '#34d399'); setTimeout(() => setStatus('', '#888'), 2000); }
+    else setStatus('Save error', '#f87171');
+};
+
+// ═══════════════════════════════════════════════════
+//  MODAL
+// ═══════════════════════════════════════════════════
+document.getElementById('newFileBtn').onclick = openModal;
+function openModal() {
+    const sel = document.getElementById('modalDir');
+    sel.innerHTML = `<option value="">/ (root)</option>`;
+    allDirs.forEach(d => { sel.innerHTML += `<option value="${d}">${d}/</option>`; });
+    document.getElementById('modalName').value = '';
+    document.getElementById('modalOverlay').classList.add('open');
+    setTimeout(() => document.getElementById('modalName').focus(), 100);
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+document.getElementById('modalOverlay').onclick = e => { if (e.target.id === 'modalOverlay') closeModal(); };
+
+async function confirmCreate() {
+    const dir  = document.getElementById('modalDir').value;
+    const name = document.getElementById('modalName').value.trim();
+    if (!name) return notify("Enter a file name", 'warn');
+    if (!name.endsWith('.hs')) return notify("The file must end with .hs", 'warn');
+    if (!/^[A-Z]/.test(name)) return notify("The name must start with an uppercase letter (Haskell convention)", 'warn');
+
+    const mod  = name.replace('.hs', '');
+    const fp   = dir ? `${dir}/${name}` : name;
+    const content = `module ${mod} where\n\nimport PlutusTx qualified\nimport PlutusTx.Prelude\nimport PlutusLedgerApi.V2\n\n{-# INLINABLE mkValidator #-}\nmkValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()\nmkValidator _ _ _ = ()\n\nvalidatorScript :: Validator\nvalidatorScript = mkValidatorScript\n    $$(PlutusTx.compile [|| mkValidator ||])\n`;
+
+    const r = await fetch('/workspace/create', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath: fp, content })
+    });
+    if (!r.ok) return notify('Error creating file: ' + await r.text(), 'error');
+    closeModal(); currentSidebarPath = dir;
+    await refreshFiles(); await selectFile(fp, name);
+}
+document.getElementById('modalName').addEventListener('keydown', e => {
+    if (e.key === 'Enter') confirmCreate();
+    if (e.key === 'Escape') closeModal();
+});
+
+// ═══════════════════════════════════════════════════
+//  COMPILATION
+// ═══════════════════════════════════════════════════
+document.getElementById('runFileBtn').onclick = () => {
+    if (selectedFileName) runWorkspaceFile(selectedFilePath, selectedFileName);
+};
+
+function runWorkspaceFile(fullPath, fileName) {
+    const vName = document.getElementById('validatorNameInput').value.trim();
+    if (!vName) return notify("Please enter a validator name in the toolbar input field.", 'warn');
+
+    if (fullPath === selectedFilePath) {
+        fetch('/workspace/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filePath: fullPath, content: window.editor.getValue() })
+        }).then(() => runCode({ fileName, validatorName: vName }));
+    } else {
+        runCode({ fileName, validatorName: vName });
+    }
+}
+
+async function runCode(body) {
+    document.getElementById('runFileBtn').disabled = true;
+    setStatus('Compiling...', '#f0a500');
+    document.getElementById('logs').textContent = '';
+    document.getElementById('std').textContent  = '';
+    document.getElementById('cbor').textContent = '';
+    _setValidatorAddr(null);
+
+    if (window.editor && window.setGHCMarkers)
+        monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
+
+    let hasError = false, fullLog = '', cborResult = null;
+
+    try {
+        const res = await fetch('/run', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        function processLines(b) {
+            const lines = b.split('\n');
+            const rem   = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const { type, output } = JSON.parse(line.slice(6));
+                    if (type === 'compilation') {
+                        document.getElementById('logs').textContent += output;
+                        document.getElementById('logs').scrollTop = document.getElementById('logs').scrollHeight;
+                        fullLog += output;
+                        if (/^.*error:/.test(output) || output.includes('Build failed')) hasError = true;
+                    } else if (type === 'cbor') {
+                        cborResult = output;
+                        document.getElementById('cbor').textContent = output;
+                    } else {
+                        document.getElementById('std').textContent += output;
+                        document.getElementById('std').scrollTop = document.getElementById('std').scrollHeight;
+                    }
+                } catch (_) {}
+            }
+            return rem;
+        }
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                if (buf.trim()) processLines(buf + '\n');
+                if (window.setGHCMarkers) window.setGHCMarkers(fullLog);
+                break;
+            }
+            buf += decoder.decode(value, { stream: true });
+            buf  = processLines(buf);
+        }
+
+        // ── Derive validator address from CBOR once stream is done ──
+        if (cborResult && !hasError) {
+            const addr = _computeValidatorAddr(cborResult);
+            _setValidatorAddr(addr);
+        }
+
+        setStatus(hasError ? 'Build failed' : 'Success ✓', hasError ? '#f87171' : '#34d399');
+
+    } catch (e) {
+        document.getElementById('logs').textContent += `\nNetwork error: ${e.message}`;
+        setStatus('Network error', '#f87171');
+    }
+    document.getElementById('runFileBtn').disabled = !selectedFileName?.endsWith('.hs');
+}
+
+// ═══════════════════════════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════════════════════════
+function setStatus(msg, color) {
+    document.getElementById('statusEl').textContent = msg;
+    document.getElementById('statusEl').style.color = color;
+}
+function copyPanel(id) {
+    const el   = document.getElementById(id);
+    const text = el.textContent.trim();
+    if (!text) return;
+
+    navigator.clipboard.writeText(text).then(() => {
+        // Inject flash overlay if not already present
+        let flash = el.querySelector('.copy-flash');
+        if (!flash) {
+            flash = document.createElement('div');
+            flash.className = 'copy-flash';
+            flash.textContent = 'Copied ✓';
+            // Panel must be position:relative — set it
+            el.style.position = 'relative';
+            el.appendChild(flash);
+        }
+
+        // Force reflow so transition fires cleanly
+        flash.classList.remove('hide');
+        flash.classList.add('show');
+
+        clearTimeout(el._copyTimer);
+        el._copyTimer = setTimeout(() => {
+            flash.classList.remove('show');
+            flash.classList.add('hide');
+        }, 900);
+    });
+}
+
+// Keep legacy name in case called from elsewhere
+function copyCBOR() { copyPanel('cbor'); }
 </script>
 </body>
 </html>

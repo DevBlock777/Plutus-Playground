@@ -9,6 +9,7 @@ import FileStore from 'session-file-store';
 import { v4 as uuidv4 } from 'uuid';
 import { extractModuleName } from './utils.js';
 import { registerRoutes, requireAuth } from './auth.js';
+import { hashSource, getCache, setCache, cacheStats } from './cache.js';
 
 const app = express();
 const PORT = 3000;
@@ -160,7 +161,7 @@ app.post('/run', requireAuth, (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    const { code, fileName } = req.body;
+    const { code, fileName, validatorName } = req.body;
     const jobId = uuidv4();
     const userId = req.session.user.id;
     const userDir = userWspace(userId);
@@ -178,25 +179,48 @@ app.post('/run', requireAuth, (req, res) => {
                 return endSSE(res);
             }
 
-            const lectureDir = `/app/code/wspace/lecture`;
-            const tmpWrapper = path.join(TMP_DIR, `Main_${jobId}.hs`);
-            fs.writeFileSync(tmpWrapper, buildWrapper(moduleName, jobId));
+            // Read source from Docker
+            exec(`docker exec plutus-runner cat "${sourceFile}"`, (err2, sourceCode) => {
+                if (err2) {
+                    sendSSE(res, `> ERROR: Could not read source file.\n`, 'compilation');
+                    return endSSE(res);
+                }
 
-            const dockerCmd = `docker exec plutus-runner cp "${sourceFile}" "${lectureDir}/${moduleName}.hs" && \
-docker cp "${tmpWrapper}" plutus-runner:${lectureDir}/Main.hs && \
+                // Check cache on original source (before injection)
+                const hash  = hashSource(sourceCode);
+                const entry = getCache(hash);
+                if (entry) {
+                    sendSSE(res, `> Cache hit — skipping compilation.\n`, 'compilation');
+                    sendSSE(res, `> CBOR retrieved from cache.\n`, 'stdout');
+                    sendSSE(res, entry.cborHex, 'cbor');
+                    sendSSE(res, `> Cache: ${cacheStats().entries}/${cacheStats().maxEntries} entries.\n`, 'stdout');
+                    return endSSE(res);
+                }
+
+                sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
+
+                // Build augmented source: user code + injected CBOR block
+                const augmented   = buildAugmentedSource(sourceCode, moduleName, jobId, validatorName);
+                const lectureDir  = `/app/code/wspace/lecture`;
+                const tmpSrc      = path.join(TMP_DIR, `${moduleName}_${jobId}.hs`);
+                fs.writeFileSync(tmpSrc, augmented);
+
+                // Copy augmented file as Main.hs (module is now "module Main")
+                const dockerCmd = `docker cp "${tmpSrc}" plutus-runner:${lectureDir}/Main.hs && \
 docker exec plutus-runner bash -lc "
   source /root/.nix-profile/etc/profile.d/nix.sh && \
   cd /app/code/wspace && \
   nix develop . --command cabal run alw-exe 2>&1
 "`;
-            const child = exec(dockerCmd, { maxBuffer: 1024 * 1024 * 50 });
-            child.stdout.on('data', (d) => sendSSE(res, d, d.includes('written successfully') ? 'stdout' : 'compilation'));
-            child.stderr.on('data', (d) => sendSSE(res, d, 'compilation'));
-            child.on('close', (code) => {
-                if (fs.existsSync(tmpWrapper)) fs.unlinkSync(tmpWrapper);
-                handleClose(res, code, jobId);
+                const child = exec(dockerCmd, { maxBuffer: 1024 * 1024 * 50 });
+                child.stdout.on('data', (d) => sendSSE(res, d, d.includes('written successfully') ? 'stdout' : 'compilation'));
+                child.stderr.on('data', (d) => sendSSE(res, d, 'compilation'));
+                child.on('close', (code) => {
+                    if (fs.existsSync(tmpSrc)) fs.unlinkSync(tmpSrc);
+                    handleClose(res, code, jobId, hash);
+                });
+                req.on('close', () => child.kill());
             });
-            req.on('close', () => child.kill());
         });
         return;
     }
@@ -208,16 +232,32 @@ docker exec plutus-runner bash -lc "
     }
 
     const moduleName = extractModuleName(code);
-    const jobDir = path.join(TMP_DIR, jobId);
+
+    // ── Check cache first ──
+    const hash  = hashSource(code);
+    const entry = getCache(hash);
+
+    if (entry) {
+        sendSSE(res, `> Cache hit — skipping compilation.\n`, 'compilation');
+        sendSSE(res, `> CBOR retrieved from cache.\n`, 'stdout');
+        sendSSE(res, entry.cborHex, 'cbor');
+        const stats = cacheStats();
+        sendSSE(res, `> Cache: ${stats.entries}/${stats.maxEntries} entries.\n`, 'stdout');
+        return endSSE(res);
+    }
+
+    sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
+
+    const augmented = buildAugmentedSource(code, moduleName, jobId, validatorName);
+    const jobDir    = path.join(TMP_DIR, jobId);
     fs.mkdirSync(jobDir, { recursive: true });
-    fs.writeFileSync(path.join(jobDir, `${moduleName}.hs`), code);
-    fs.writeFileSync(path.join(jobDir, 'Main.hs'), buildWrapper(moduleName, jobId));
+    // Write augmented source as Main.hs (module is now "module Main")
+    fs.writeFileSync(path.join(jobDir, 'Main.hs'), augmented);
     sendSSE(res, `[${jobId}] Initializing...\n`, 'compilation');
 
     const dockerCmd = `
 docker exec plutus-runner bash -lc "
   source /root/.nix-profile/etc/profile.d/nix.sh && \
-  cp /app/jobs/${jobId}/${moduleName}.hs /app/code/wspace/lecture/${moduleName}.hs && \
   cp /app/jobs/${jobId}/Main.hs /app/code/wspace/lecture/Main.hs && \
   cd /app/code/wspace && \
   nix develop . --command cabal run alw-exe
@@ -228,27 +268,62 @@ docker exec plutus-runner bash -lc "
     child.stderr.on('data', (d) => sendSSE(res, d, 'compilation'));
     child.on('close', (exitCode) => {
         try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch (e) {}
-        handleClose(res, exitCode, jobId);
+        handleClose(res, exitCode, jobId, hash);
     });
     child.on('error', (err) => { sendSSE(res, `Fatal Error: ${err.message}\n`, 'compilation'); endSSE(res); });
     req.on('close', () => child.kill());
 });
 
-function buildWrapper(moduleName, jobId) {
-    return `{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE OverloadedStrings #-}
-module Main where
-import Utilities (writeValidatorToFile)
-import qualified ${moduleName}
+/**
+ * Appends the CBOR generation block to the user's source file.
+ * validatorName replaces "mValidator" — it's the function the user defined
+ * that has type  BuiltinData -> BuiltinData -> BuiltinData -> ()
+ *
+ * The injected block mirrors exactly what was manually added before:
+ *
+ *   {-# INLINEABLE untypedValidator #-}
+ *   untypedValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()
+ *   untypedValidator d r c = P.check (mValidator (from d) (from r) (from c))
+ *
+ *   validatorScript :: PlutusV2.Validator
+ *   validatorScript = PlutusV2.mkValidatorScript $$(PlutusTx.compile [||untypedValidator||])
+ *
+ *   getCbor :: IO ()
+ *   getCbor = writeValidatorToFile "./assets/xxx.plutus" validatorScript
+ *   main = getCbor
+ */
+function buildAugmentedSource(sourceCode, moduleName, jobId, validatorName) {
+    // Rename module to Main so cabal can run it as an executable
+    const withMain = sourceCode.replace(/^module\s+\S+/m, 'module Main');
+
+    const block = `
+
+-- ── Auto-injected by Plutus IDE ──────────────────
+{-# INLINEABLE _ide_untypedValidator #-}
+_ide_untypedValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()
+_ide_untypedValidator mDatum mRedeemer ctx =
+  P.check
+    ( ${validatorName}
+        (PlutusTx.unsafeFromBuiltinData mDatum)
+        (PlutusTx.unsafeFromBuiltinData mRedeemer)
+        (PlutusTx.unsafeFromBuiltinData ctx)
+    )
+
+_ide_validatorScript :: PlutusV2.Validator
+_ide_validatorScript = PlutusV2.mkValidatorScript $$(PlutusTx.compile [||_ide_untypedValidator||])
+
+getCbor :: IO ()
+getCbor = writeValidatorToFile "./assets/${jobId}output.plutus" _ide_validatorScript
+
 main :: IO ()
-main = do
-  writeValidatorToFile "./assets/${jobId}output.plutus" ${moduleName}.validatorScript
-  putStrLn "Validator CBOR written successfully."
+main = getCbor
+-- ── End auto-injected block ──────────────────────
 `;
+
+    return withMain + block;
 }
 
-function handleClose(res, exitCode, jobId) {
+function handleClose(res, exitCode, jobId, sourceHash = null) {
     if (exitCode === null || exitCode === 0) {
         sendSSE(res, "> Extracting CBOR...\n", 'stdout');
         exec(`docker exec plutus-runner cat /app/code/wspace/assets/${jobId}output.plutus`, (err, stdout) => {
@@ -256,11 +331,25 @@ function handleClose(res, exitCode, jobId) {
                 sendSSE(res, `> Error reading CBOR: ${err.message}\n`, 'compilation');
             } else {
                 try {
-                    const parsed = JSON.parse(stdout);
-                    sendSSE(res, parsed.cborHex || stdout, 'cbor');
+                    const parsed  = JSON.parse(stdout);
+                    const cborHex = parsed.cborHex || stdout;
+                    sendSSE(res, cborHex, 'cbor');
                     sendSSE(res, "> CBOR generated successfully.\n", 'stdout');
+
+                    // ── Save to cache if we have a hash ──
+                    if (sourceHash) {
+                        setCache(sourceHash, cborHex);
+                        const stats = cacheStats();
+                        sendSSE(res, `> Result saved to cache (${stats.entries} entries).\n`, 'stdout');
+                        console.log(`[cache] Saved entry ${sourceHash.slice(0, 8)}… — ${stats.entries}/${stats.maxEntries} entries`);
+                    }
                 } catch (e) {
-                    sendSSE(res, stdout, 'cbor');
+                    const raw = stdout.trim();
+                    sendSSE(res, raw, 'cbor');
+                    if (sourceHash) {
+                        setCache(sourceHash, raw);
+                        sendSSE(res, `> Result saved to cache.\n`, 'stdout');
+                    }
                 }
             }
             endSSE(res);

@@ -7,4 +7,5 @@ sessions.json
 ./sessions
 assets
 sessions
-
+cache.json
+users.json
