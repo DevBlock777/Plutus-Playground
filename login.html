@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Plutus IDE — Connexion</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #111118;
+            --border: #1e1e2e;
+            --accent: #7c3aed;
+            --text: #e2e8f0;
+            --muted: #4a5568;
+            --error: #fc8181;
+            --success: #68d391;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(124,58,237,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(124,58,237,0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+        }
+        .glow {
+            position: fixed;
+            top: -200px; left: -200px;
+            width: 600px; height: 600px;
+            background: radial-gradient(circle, rgba(124,58,237,0.07) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .container { width: 420px; position: relative; z-index: 1; }
+        .logo { text-align: center; margin-bottom: 40px; }
+        .logo-symbol {
+            font-family: 'Syne', sans-serif;
+            font-size: 48px; font-weight: 800;
+            background: linear-gradient(135deg, #7c3aed, #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .logo-sub { font-size: 11px; color: var(--muted); letter-spacing: 4px; text-transform: uppercase; margin-top: 6px; }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+        }
+        .tabs { display: flex; background: var(--bg); border-radius: 8px; padding: 4px; margin-bottom: 28px; }
+        .tab {
+            flex: 1; padding: 9px; text-align: center; font-size: 12px;
+            font-weight: 600; cursor: pointer; border-radius: 6px;
+            color: var(--muted); transition: all 0.2s;
+            letter-spacing: 1px; text-transform: uppercase; border: 1px solid transparent;
+        }
+        .tab.active { background: var(--surface); color: var(--text); border-color: var(--border); }
+        .form { display: none; flex-direction: column; gap: 16px; }
+        .form.active { display: flex; }
+        .field { display: flex; flex-direction: column; gap: 6px; }
+        .field label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+        .field input {
+            background: #1a1a2e; border: 1px solid #3a3a5c;
+            border-radius: 6px; padding: 11px 14px; color: #ffffff;
+            font-family: 'JetBrains Mono', monospace; font-size: 13px; outline: none;
+            transition: border-color 0.2s;
+            -webkit-text-fill-color: #ffffff;
+        }
+        .field input:focus { border-color: var(--accent); background: #1e1e38; }
+        .field input::placeholder { color: #6b7280; opacity: 1; }
+        .btn {
+            background: linear-gradient(135deg, var(--accent), #5b21b6);
+            color: white; border: none; border-radius: 6px; padding: 13px;
+            font-family: 'JetBrains Mono', monospace; font-size: 12px;
+            font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+            cursor: pointer; margin-top: 6px; transition: all 0.2s;
+        }
+        .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 25px rgba(124,58,237,0.4); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .msg {
+            font-size: 12px; padding: 10px 14px; border-radius: 6px;
+            display: none; font-family: 'JetBrains Mono', monospace;
+        }
+        .msg.error { background: rgba(252,129,129,0.1); border: 1px solid rgba(252,129,129,0.3); color: var(--error); display: block; }
+        .msg.success { background: rgba(104,211,145,0.1); border: 1px solid rgba(104,211,145,0.3); color: var(--success); display: block; }
+        .footer-note { text-align: center; font-size: 10px; color: var(--muted); margin-top: 20px; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+<div class="glow"></div>
+<div class="container">
+    <div class="logo">
+        <div class="logo-symbol">⬡ PLUTUS</div>
+        <div class="logo-sub">Smart Contract IDE</div>
+    </div>
+    <div class="card">
+        <div class="tabs">
+            <div class="tab active" id="tabLogin" onclick="switchTab('login')">Connexion</div>
+            <div class="tab" id="tabRegister" onclick="switchTab('register')">Inscription</div>
+        </div>
+
+        <!-- LOGIN -->
+        <div id="loginForm" class="form active">
+            <div id="loginMsg" class="msg"></div>
+            <div class="field">
+                <label>Identifiant</label>
+                <input id="loginUser" type="text" placeholder="votre_username" autocomplete="username" />
+            </div>
+            <div class="field">
+                <label>Mot de passe</label>
+                <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" />
+            </div>
+            <button class="btn" id="loginBtn" onclick="login()">→ Connexion</button>
+        </div>
+
+        <!-- REGISTER -->
+        <div id="registerForm" class="form">
+            <div id="registerMsg" class="msg"></div>
+            <div class="field">
+                <label>Identifiant</label>
+                <input id="regUser" type="text" placeholder="votre_username" autocomplete="username" />
+            </div>
+            <div class="field">
+                <label>Mot de passe</label>
+                <input id="regPass" type="password" placeholder="Min. 6 caractères" autocomplete="new-password" />
+            </div>
+            <div class="field">
+                <label>Confirmer</label>
+                <input id="regPass2" type="password" placeholder="Répétez le mot de passe" autocomplete="new-password" />
+            </div>
+            <button class="btn" id="registerBtn" onclick="register()">→ Créer un compte</button>
+        </div>
+    </div>
+    <div class="footer-note">Session sécurisée · Cookie httpOnly</div>
+</div>
+
+<script>
+    function switchTab(tab) {
+        document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
+        document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
+        document.getElementById('loginForm').classList.toggle('active', tab === 'login');
+        document.getElementById('registerForm').classList.toggle('active', tab === 'register');
+    }
+
+    function showMsg(id, text, type) {
+        const el = document.getElementById(id);
+        el.textContent = text;
+        el.className = `msg ${type}`;
+    }
+
+    async function login() {
+        const username = document.getElementById('loginUser').value.trim();
+        const password = document.getElementById('loginPass').value;
+        if (!username || !password) return showMsg('loginMsg', 'Remplissez tous les champs', 'error');
+
+        document.getElementById('loginBtn').disabled = true;
+        try {
+            const r = await fetch('/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // credentials: 'include' inutile en SSR same-origin
+                body: JSON.stringify({ username, password })
+            });
+            const data = await r.json();
+            if (!r.ok) {
+                showMsg('loginMsg', data.error, 'error');
+            } else {
+                // Le cookie de session est posé automatiquement par le serveur
+                window.location.href = '/ide';
+            }
+        } catch (e) {
+            showMsg('loginMsg', 'Erreur réseau', 'error');
+        }
+        document.getElementById('loginBtn').disabled = false;
+    }
+
+    async function register() {
+        const username = document.getElementById('regUser').value.trim();
+        const password = document.getElementById('regPass').value;
+        const password2 = document.getElementById('regPass2').value;
+
+        if (!username || !password) return showMsg('registerMsg', 'Remplissez tous les champs', 'error');
+        if (password !== password2) return showMsg('registerMsg', 'Les mots de passe ne correspondent pas', 'error');
+
+        document.getElementById('registerBtn').disabled = true;
+        try {
+            const r = await fetch('/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await r.json();
+            if (!r.ok) {
+                showMsg('registerMsg', data.error, 'error');
+            } else {
+                window.location.href = '/ide';
+            }
+        } catch (e) {
+            showMsg('registerMsg', 'Erreur réseau', 'error');
+        }
+        document.getElementById('registerBtn').disabled = false;
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        if (document.getElementById('loginForm').classList.contains('active')) login();
+        else register();
+    });
+</script>
+</body>
+</html>

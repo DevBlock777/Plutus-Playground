@@ -5,173 +5,193 @@
     <title>Plutus Architect IDE</title>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs/loader.js"></script>
     <style>
-        :root { --bg: #1e1e1e; --panel: #252526; --border: #333; --accent: #007acc; }
-        body, html { margin: 0; padding: 0; height: 100vh; background: var(--bg); color: #d4d4d4; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        :root { --bg: #1e1e1e; --panel: #252526; --border: #333; --accent: #7c3aed; }
+        body, html { margin:0; padding:0; height:100vh; background:var(--bg); color:#d4d4d4; font-family:'Segoe UI',sans-serif; overflow:hidden; }
+        .layout { display:flex; flex-direction:column; height:100vh; }
 
-        .layout { display: flex; flex-direction: column; height: 100vh; }
-
-        /* ── Toolbar ── */
+        /* Toolbar */
         .toolbar {
-            height: 50px; background: #333; display: flex; align-items: center;
-            padding: 0 16px; gap: 10px; border-bottom: 1px solid #000; flex-shrink: 0;
+            height:50px; background:#1a1a24; display:flex; align-items:center;
+            padding:0 16px; gap:10px; border-bottom:1px solid #2d2d3d; flex-shrink:0;
         }
+        .logo-small { font-size:16px; font-weight:800; color:#7c3aed; margin-right:6px; }
         .toolbar button {
-            background: var(--accent); color: white; border: none;
-            padding: 7px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;
+            background:var(--accent); color:white; border:none;
+            padding:7px 14px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:12px;
         }
-        .toolbar button:hover:not(:disabled) { background: #005f9e; }
-        .toolbar button:disabled { background: #555; cursor: not-allowed; }
-        .toolbar button.sec { background: #444; }
-        .toolbar button.sec:hover:not(:disabled) { background: #555; }
-        .toolbar button.run-file { background: #1e7a1e; }
-        .toolbar button.run-file:hover:not(:disabled) { background: #165c16; }
-        #activeFile { font-size: 12px; color: #4ec9b0; font-family: monospace; }
-        #statusEl { font-size: 12px; color: #888; }
-        .sep { width: 1px; height: 24px; background: #555; margin: 0 4px; }
+        .toolbar button:hover:not(:disabled) { background:#6d28d9; }
+        .toolbar button:disabled { background:#3a3a3a; color:#666; cursor:not-allowed; }
+        .toolbar button.sec { background:#2d2d3d; }
+        .toolbar button.sec:hover:not(:disabled) { background:#383850; }
+        .toolbar button.run-file { background:#064e3b; }
+        .toolbar button.run-file:hover:not(:disabled) { background:#065f46; }
+        #activeFile { font-size:12px; color:#a78bfa; font-family:monospace; }
+        #statusEl { font-size:12px; color:#888; }
+        .sep { width:1px; height:24px; background:#2d2d3d; margin:0 4px; }
+        .spacer { flex:1; }
 
-        /* ── Body ── */
-        .body { display: flex; flex: 1; min-height: 0; }
+        /* User badge */
+        .user-badge {
+            display:flex; align-items:center; gap:8px;
+            background:#2d2d3d; border-radius:20px; padding:4px 12px 4px 8px;
+            font-size:12px; color:#a78bfa;
+        }
+        .user-avatar {
+            width:22px; height:22px; border-radius:50%;
+            background:linear-gradient(135deg,#7c3aed,#06b6d4);
+            display:flex; align-items:center; justify-content:center;
+            font-size:11px; font-weight:bold; color:white;
+        }
+        .logout-btn {
+            background:none !important; border:none; color:#555 !important;
+            cursor:pointer; font-size:14px; padding:0 0 0 6px !important;
+        }
+        .logout-btn:hover { color:#fc8181 !important; }
 
-        /* ── Sidebar ── */
+        /* Body */
+        .body { display:flex; flex:1; min-height:0; }
+
+        /* Sidebar */
         .sidebar {
-            width: 240px; background: #252526; border-right: 1px solid var(--border);
-            display: flex; flex-direction: column; flex-shrink: 0;
+            width:240px; background:#16161f; border-right:1px solid #2d2d3d;
+            display:flex; flex-direction:column; flex-shrink:0;
         }
         .sidebar-header {
-            padding: 9px 12px; font-size: 10px; font-weight: bold;
-            text-transform: uppercase; color: #888; border-bottom: 1px solid var(--border);
-            display: flex; justify-content: space-between; align-items: center; gap: 4px;
+            padding:10px 12px; font-size:10px; font-weight:bold;
+            text-transform:uppercase; color:#ffffff; border-bottom:1px solid #2d2d3d;
+            display:flex; justify-content:space-between; align-items:center;
         }
-        .sidebar-header span { font-size: 10px; font-weight: normal; text-transform: none; }
-        .ico-btn {
-            background: none; border: none; color: #777; cursor: pointer;
-            font-size: 14px; padding: 1px 5px; border-radius: 3px;
-        }
-        .ico-btn:hover { background: #383838; color: #ccc; }
+        .ico-btn { background:none; border:none; color:#555; cursor:pointer; font-size:14px; padding:1px 5px; border-radius:3px; }
+        .ico-btn:hover { background:#2d2d3d; color:#aaa; }
         .sidebar-path {
-            padding: 3px 12px; font-size: 10px; font-family: monospace;
-            color: #555; background: #1a1a1a; border-bottom: 1px solid #2a2a2a;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            padding:3px 12px; font-size:10px; font-family:monospace;
+            color:#444; background:#111118; border-bottom:1px solid #222;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
         }
-        .file-list { flex: 1; overflow-y: auto; }
+        .file-list { flex:1; overflow-y:auto; }
         .file-item {
-            padding: 5px 12px; font-size: 12px; cursor: pointer;
-            display: flex; align-items: center; justify-content: space-between;
-            border-left: 3px solid transparent;
-            white-space: nowrap; overflow: hidden; user-select: none;
+            padding:5px 12px; font-size:12px; cursor:pointer;
+            display:flex; align-items:center; justify-content:space-between;
+            border-left:3px solid transparent;
+            white-space:nowrap; overflow:hidden; user-select:none;
         }
-        .file-item:hover { background: #2a2d2e; }
-        .file-item.active { background: #37373d; border-left-color: var(--accent); color: white; }
-        .file-item.is-dir { color: #dcb67a; }
-        .file-item.back { color: #666; border-bottom: 1px solid #2a2a2a; font-style: italic; }
-        .file-item-label { display: flex; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; }
+        .file-item:hover { background:#1e1e2e; }
+        .file-item.active { background:#252535; border-left-color:var(--accent); color:white; }
+        .file-item.is-dir { color:#a78bfa; }
+        .file-item.back { color:#555; border-bottom:1px solid #222; font-style:italic; }
+        .file-item-label { display:flex; align-items:center; gap:7px; overflow:hidden; text-overflow:ellipsis; }
         .compile-ico {
-            opacity: 0; font-size: 11px; color: #4ec9b0; flex-shrink: 0;
-            padding: 1px 5px; border-radius: 3px; background: #1e3a1e;
+            opacity:0; font-size:10px; color:#34d399; flex-shrink:0;
+            padding:1px 6px; border-radius:3px; background:#064e3b;
         }
-        .file-item:hover .compile-ico { opacity: 1; }
-        .file-list::-webkit-scrollbar { width: 4px; }
-        .file-list::-webkit-scrollbar-thumb { background: #3a3a3a; }
+        .file-item:hover .compile-ico { opacity:1; }
+        .file-list::-webkit-scrollbar { width:4px; }
+        .file-list::-webkit-scrollbar-thumb { background:#2d2d3d; }
 
-        /* ── Editor zone ── */
-        .editor-zone { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-        #editor { flex: 2; border-bottom: 2px solid var(--border); min-height: 0; }
+        /* Editor */
+        .editor-zone { flex:1; display:flex; flex-direction:column; min-width:0; }
+        #editor { flex:2; border-bottom:2px solid #111; min-height:0; }
 
-        /* ── Results ── */
-        .results { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: var(--border); min-height: 0; }
-        .panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+        /* Results */
+        .results { flex:1; display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px; background:#111; min-height:0; }
+        .panel { background:#16161f; display:flex; flex-direction:column; min-height:0; }
         .panel-header {
-            background: #2d2d2d; padding: 7px 12px; font-size: 11px;
-            text-transform: uppercase; color: #aaa; border-bottom: 1px solid var(--border); flex-shrink: 0;
+            background:#1a1a24; padding:7px 12px; font-size:10px;
+            text-transform:uppercase; color:#ffffff; border-bottom:1px solid #222;
+            flex-shrink:0; letter-spacing:1px;
         }
         .panel-content {
-            flex: 1; overflow-y: auto; padding: 12px;
-            font-family: 'Consolas', monospace; font-size: 12px;
-            white-space: pre-wrap; word-break: break-all;
+            flex:1; overflow-y:auto; padding:12px;
+            font-family:'Consolas',monospace; font-size:12px;
+            white-space:pre-wrap; word-break:break-all; line-height:1.5;
         }
-        .comp-log { color: #85d7ff; }
-        .std-log  { color: #b5cea8; }
-        .cbor-log { color: #ce9178; cursor: pointer; }
-        .cbor-log:hover { opacity: 0.85; }
-        .panel-content::-webkit-scrollbar { width: 6px; }
-        .panel-content::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        .comp-log { color:#85d7ff; }
+        .std-log  { color:#86efac; }
+        .cbor-log { color:#fbbf24; cursor:pointer; }
+        .cbor-log:hover { opacity:0.85; }
+        .panel-content::-webkit-scrollbar { width:4px; }
+        .panel-content::-webkit-scrollbar-thumb { background:#2d2d3d; }
 
-        /* ── Modal ── */
+        /* Modal */
         .modal-overlay {
-            display: none; position: fixed; inset: 0;
-            background: rgba(0,0,0,0.6); z-index: 100;
-            align-items: center; justify-content: center;
+            display:none; position:fixed; inset:0;
+            background:rgba(0,0,0,0.7); z-index:100;
+            align-items:center; justify-content:center;
         }
-        .modal-overlay.open { display: flex; }
+        .modal-overlay.open { display:flex; }
         .modal {
-            background: #2d2d2d; border: 1px solid #444; border-radius: 6px;
-            padding: 24px; width: 420px; display: flex; flex-direction: column; gap: 14px;
+            background:#1a1a24; border:1px solid #2d2d3d; border-radius:8px;
+            padding:24px; width:400px; display:flex; flex-direction:column; gap:14px;
         }
-        .modal h3 { margin: 0; font-size: 14px; color: #ddd; }
-        .modal label { font-size: 12px; color: #999; display: block; margin-bottom: 4px; }
+        .modal h3 { margin:0; font-size:13px; color:#a78bfa; letter-spacing:1px; text-transform:uppercase; }
+        .modal label { font-size:10px; color:#555; display:block; margin-bottom:4px; letter-spacing:1px; text-transform:uppercase; }
         .modal input, .modal select {
-            width: 100%; background: #1e1e1e; border: 1px solid #444; color: #ddd;
-            padding: 7px 10px; border-radius: 4px; font-size: 13px; box-sizing: border-box;
+            width:100%; background:#111118; border:1px solid #2d2d3d; color:#ddd;
+            padding:8px 10px; border-radius:4px; font-family:monospace; font-size:13px; box-sizing:border-box;
         }
-        .modal input:focus, .modal select:focus { outline: 1px solid var(--accent); }
-        .modal-hint { font-size: 11px; color: #666; margin-top: -8px; }
-        .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-        .modal-actions button { padding: 7px 18px; font-size: 12px; }
-        .modal-actions button.cancel { background: #444; }
+        .modal input:focus { outline:1px solid var(--accent); }
+        .modal-hint { font-size:10px; color:#444; }
+        .modal-actions { display:flex; justify-content:flex-end; gap:8px; }
+        .modal-actions button { padding:7px 18px; font-size:12px; border-radius:4px; border:none; cursor:pointer; color:white; font-weight:bold; }
+        .modal-actions .cancel { background:#2d2d3d; }
+        .modal-actions .confirm { background:var(--accent); }
     </style>
 </head>
 <body>
 
-<!-- MODAL création fichier -->
 <div id="modalOverlay" class="modal-overlay">
     <div class="modal">
-        <h3>➕ Nouveau fichier Haskell</h3>
+        <h3>+ New file</h3>
         <div>
-            <label>Dossier de destination</label>
+            <label>Directory</label>
             <select id="modalDir"></select>
         </div>
         <div>
-            <label>Nom du fichier</label>
+            <label>file name </label>
             <input id="modalName" type="text" placeholder="ex: MyValidator.hs" />
-            <p class="modal-hint">Le nom doit commencer par une majuscule et finir par .hs</p>
+            <p class="modal-hint">Must start with an uppercase letter and end with .hs</p>
         </div>
         <div class="modal-actions">
-            <button class="cancel" onclick="closeModal()">Annuler</button>
-            <button onclick="confirmCreate()">Créer</button>
+            <button class="cancel" onclick="closeModal()">Cancel</button>
+            <button class="confirm" onclick="confirmCreate()">Create</button>
         </div>
     </div>
 </div>
 
 <div class="layout">
-    <!-- TOOLBAR -->
     <div class="toolbar">
-        <button id="runEditorBtn">▶ RUN (éditeur)</button>
-        <button id="runFileBtn" class="run-file" disabled title="Sélectionnez un .hs dans la sidebar">▶ RUN fichier</button>
+        <span class="logo-small">⬡</span>
+        <!-- <button id="runEditorBtn">▶ RUN éditeur</button> -->
+        <button id="runFileBtn" class="run-file" disabled>▶ Compile</button>
         <div class="sep"></div>
         <button id="saveBtn" class="sec">💾 Save</button>
-        <button id="newFileBtn" class="sec">＋ Nouveau .hs</button>
+        <button id="newFileBtn" class="sec">＋ New</button>
         <div class="sep"></div>
         <span id="statusEl"></span>
         <span id="activeFile"></span>
+        <div class="spacer"></div>
+        <div class="user-badge">
+            <div class="user-avatar" id="userAvatar">?</div>
+            <span id="userLabel">Loading...</span>
+            <button class="logout-btn" onclick="logout()" title="Logout">Logout⏻</button>
+        </div>
     </div>
 
     <div class="body">
-        <!-- SIDEBAR -->
         <div class="sidebar">
             <div class="sidebar-header">
-                Explorer
+                My workspace
                 <span>
-                    <button class="ico-btn" onclick="openModal()" title="Nouveau fichier">＋</button>
-                    <button class="ico-btn" onclick="refreshFiles()" title="Rafraîchir">↻</button>
+                    <button class="ico-btn" onclick="openModal()" title="New file">＋</button>
+                    <button class="ico-btn" onclick="refreshFiles()" title="Refresh">↻</button>
                 </span>
             </div>
-            <div id="sidebarPath" class="sidebar-path">/app/code/wspace</div>
+            <div id="sidebarPath" class="sidebar-path">~</div>
             <div id="fileList" class="file-list">
-                <div style="padding:12px;font-size:11px;color:#555;">Chargement...</div>
+                <div style="padding:12px;font-size:11px;color:#444;">Loading...</div>
             </div>
         </div>
 
-        <!-- ÉDITEUR + PANELS -->
         <div class="editor-zone">
             <div id="editor"></div>
             <div class="results">
@@ -180,15 +200,12 @@
                     <div id="logs" class="panel-content comp-log"></div>
                 </div>
                 <div class="panel">
-                    <div class="panel-header">Standard Output</div>
+                    <div class="panel-header">Output</div>
                     <div id="std" class="panel-content std-log"></div>
                 </div>
                 <div class="panel">
-                    <div class="panel-header">
-                        Plutus CBOR
-                        <span style="font-size:9px;color:#666;text-transform:none;">(cliquer = copier)</span>
-                    </div>
-                    <div id="cbor" class="panel-content cbor-log" onclick="copyCBOR()" title="Cliquer pour copier"></div>
+                    <div class="panel-header">CBOR <span style="font-size:9px;color:#444;text-transform:none;">(cliquer = copier)</span></div>
+                    <div id="cbor" class="panel-content cbor-log" onclick="copyCBOR()"></div>
                 </div>
             </div>
         </div>
@@ -196,49 +213,224 @@
 </div>
 
 <script>
-    // ── ELEMENTS ──
-    const logsEl     = document.getElementById('logs');
-    const stdEl      = document.getElementById('std');
-    const cborEl     = document.getElementById('cbor');
-    const statusEl   = document.getElementById('statusEl');
-    const activeFileEl = document.getElementById('activeFile');
-    const runEditorBtn = document.getElementById('runEditorBtn');
-    const runFileBtn   = document.getElementById('runFileBtn');
-    const saveBtn      = document.getElementById('saveBtn');
-
     // ── STATE ──
-    let currentSidebarPath = "";   // chemin relatif sous /app/code/wspace
-    let selectedFilePath   = null; // fichier sélectionné dans la sidebar (fullPath)
-    let selectedFileName   = null; // juste le nom du fichier
-    let allDirs = [];              // liste des dossiers connus pour le modal
+    let currentSidebarPath = "";
+    let selectedFilePath   = null;
+    let selectedFileName   = null;
+    let currentUsername    = "";
+    let allDirs = [];
 
-    // ── INIT MONACO ──
+    // ── INIT ──
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs' }});
     require(['vs/editor/editor.main'], function () {
+
+        // ── Haskell language definition ──
+        monaco.languages.register({ id: 'haskell' });
+
+        monaco.languages.setMonarchTokensProvider('haskell', {
+            defaultToken: '',
+            tokenPostfix: '.hs',
+
+            keywords: [
+                'case','class','data','default','deriving','do','else','foreign',
+                'if','import','in','infix','infixl','infixr','instance','let',
+                'module','newtype','of','then','type','where','qualified','as',
+                'hiding','forall','family','mdo','rec','proc'
+            ],
+            typeKeywords: [
+                'Bool','Char','Double','Float','Int','Integer','IO','String',
+                'Maybe','Either','Ordering','Word','Void','Show','Eq','Ord',
+                'Num','Enum','Bounded','Read','Functor','Monad','Applicative',
+                'Foldable','Traversable','Semigroup','Monoid'
+            ],
+            operators: [
+                '=','->','<-','::','=>','..','|','\\','@','~',
+                '+','-','*','/','<','>','<=','>=','==','/=',
+                '&&','||','>>','>>=','<$>','<*>','<|>','$','.',':'
+            ],
+            symbols: /[=><!~?:&|+\-*\/\^%@#.\\]+/,
+            escapes: /\\(?:[nrtfb\\"'&]|[0-9]+|x[0-9a-fA-F]+|o[0-7]+)/,
+
+            tokenizer: {
+                root: [
+                    // Pragmas
+                    [/\{-#.*?#-\}/, 'keyword.pragma'],
+
+                    // Block comments
+                    [/\{-/, 'comment', '@blockComment'],
+
+                    // Line comments
+                    [/--.*$/, 'comment'],
+
+                    // String literals
+                    [/"/, 'string', '@string'],
+
+                    // Char literals
+                    [/'[^\\']'/, 'string'],
+                    [/(')(@escapes)(')/, ['string','string.escape','string']],
+
+                    // Numbers
+                    [/0[xX][0-9a-fA-F]+/, 'number.hex'],
+                    [/[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?/, 'number.float'],
+                    [/[0-9]+/, 'number'],
+
+                    // Type constructors and module names (start with uppercase)
+                    [/[A-Z][a-zA-Z0-9_']*/, {
+                        cases: {
+                            '@typeKeywords': 'type.keyword',
+                            '@default': 'type'
+                        }
+                    }],
+
+                    // Keywords and identifiers
+                    [/[a-z_][a-zA-Z0-9_']*/, {
+                        cases: {
+                            '@keywords': 'keyword',
+                            '@default': 'identifier'
+                        }
+                    }],
+
+                    // Operators
+                    [/@symbols/, {
+                        cases: {
+                            '@operators': 'operator',
+                            '@default': 'operator'
+                        }
+                    }],
+
+                    // Delimiters
+                    [/[{}()\[\]]/, 'delimiter'],
+                    [/[,;]/, 'delimiter'],
+
+                    // Whitespace
+                    [/\s+/, 'white'],
+                ],
+
+                blockComment: [
+                    [/[^{-]+/, 'comment'],
+                    [/\{-/, 'comment', '@push'],
+                    [/-\}/, 'comment', '@pop'],
+                    [/[{-]/, 'comment'],
+                ],
+
+                string: [
+                    [/[^\\"]+/, 'string'],
+                    [/@escapes/, 'string.escape'],
+                    [/\\./, 'string.escape.invalid'],
+                    [/"/, 'string', '@pop'],
+                ],
+            }
+        });
+
+        // ── Custom dark theme with Haskell colours ──
+        monaco.editor.defineTheme('haskell-dark', {
+            base: 'vs-dark',
+            inherit: true,
+            rules: [
+                { token: 'keyword',        foreground: 'c792ea', fontStyle: 'bold' },
+                { token: 'keyword.pragma', foreground: '546e7a', fontStyle: 'italic' },
+                { token: 'type',           foreground: 'ffcb6b' },
+                { token: 'type.keyword',   foreground: 'ffcb6b', fontStyle: 'bold' },
+                { token: 'comment',        foreground: '546e7a', fontStyle: 'italic' },
+                { token: 'string',         foreground: 'c3e88d' },
+                { token: 'string.escape',  foreground: '89ddff' },
+                { token: 'number',         foreground: 'f78c6c' },
+                { token: 'number.float',   foreground: 'f78c6c' },
+                { token: 'number.hex',     foreground: 'f78c6c' },
+                { token: 'operator',       foreground: '89ddff' },
+                { token: 'delimiter',      foreground: '89ddff' },
+                { token: 'identifier',     foreground: 'eeffff' },
+            ],
+            colors: {
+                'editor.background':           '#1a1a24',
+                'editor.foreground':           '#eeffff',
+                'editorLineNumber.foreground': '#3a3a5c',
+                'editorLineNumber.activeForeground': '#7c3aed',
+                'editor.lineHighlightBackground': '#1e1e30',
+                'editorCursor.foreground':     '#c792ea',
+                'editor.selectionBackground':  '#3a2d6a',
+                'editorIndentGuide.background':'#2d2d3d',
+                'editorGutter.background':     '#16161f',
+            }
+        });
+
         window.editor = monaco.editor.create(document.getElementById('editor'), {
-            value: "module MyContract where\n\n-- validatorScript = ...\n",
+            value: "-- Select or create a file in the sidebar\n",
             language: 'haskell',
-            theme: 'vs-dark',
+            theme: 'haskell-dark',
             automaticLayout: true,
             fontSize: 14,
             minimap: { enabled: false },
-            scrollbar: { vertical: 'visible' }
+            scrollbar: { vertical: 'visible' },
+            renderLineHighlight: 'line',
+            bracketPairColorization: { enabled: true },
+            'semanticHighlighting.enabled': true,
         });
-        refreshFiles();
+
+        // ── GHC error parser → Monaco markers ──
+        // Called after each compilation with the full log text
+        window.setGHCMarkers = function(logText) {
+            const model = window.editor.getModel();
+            if (!model) return;
+
+            const markers = [];
+            // GHC format: "filename:line:col: error:" or "filename:line:col-col: error:"
+            const pattern = /^.*?:(\d+):(\d+)(?:-\d+)?:\s*(error|warning):\s*([\s\S]*?)(?=\n\S|\n\n|$)/gm;
+            let match;
+            while ((match = pattern.exec(logText)) !== null) {
+                const line    = parseInt(match[1], 10);
+                const col     = parseInt(match[2], 10);
+                const sev     = match[3];
+                const msg     = match[4].trim().replace(/\n\s+/g, ' ');
+                markers.push({
+                    startLineNumber: line,
+                    startColumn:     col,
+                    endLineNumber:   line,
+                    endColumn:       col + 1,
+                    message:         msg,
+                    severity: sev === 'error'
+                        ? monaco.MarkerSeverity.Error
+                        : monaco.MarkerSeverity.Warning,
+                });
+            }
+            monaco.editor.setModelMarkers(model, 'ghc', markers);
+        };
+
+        // Charge le username depuis la session (SSR : simple GET)
+        fetch('/auth/me')
+            .then(r => {
+                // Si le cookie de session est absent/expiré, le serveur
+                // a déjà redirigé vers /login avant même qu'on arrive ici.
+                // Ce cas ne devrait donc pas arriver, mais par sécurité :
+                if (!r.ok) return window.location.href = '/login';
+                return r.json();
+            })
+            .then(data => {
+                if (!data) return;
+                currentUsername = data.username;
+                document.getElementById('userLabel').textContent = data.username;
+                document.getElementById('userAvatar').textContent = data.username[0].toUpperCase();
+                refreshFiles();
+            })
+            .catch(() => window.location.href = '/login');
     });
 
-    // ══════════════════════════════════════
-    //  SIDEBAR
-    // ══════════════════════════════════════
+    // ── LOGOUT ──
+    async function logout() {
+        await fetch('/auth/logout', { method: 'POST' });
+        window.location.href = '/login';
+    }
+
+    // ── SIDEBAR ──
     async function refreshFiles() {
         try {
-            const res = await fetch(`/workspace/files?path=${encodeURIComponent(currentSidebarPath)}`);
-            const items = await res.json();
+            const r = await fetch(`/workspace/files?path=${encodeURIComponent(currentSidebarPath)}`);
+            if (r.status === 302 || r.redirected) return window.location.href = '/login';
+            const items = await r.json();
 
             document.getElementById('sidebarPath').textContent =
-                '/app/code/wspace' + (currentSidebarPath ? '/' + currentSidebarPath : '');
+                `~/${currentUsername}${currentSidebarPath ? '/' + currentSidebarPath : ''}`;
 
-            // Collecte des dossiers pour le modal
             items.filter(i => i.isDirectory).forEach(i => {
                 if (!allDirs.includes(i.fullPath)) allDirs.push(i.fullPath);
             });
@@ -254,44 +446,30 @@
                 html += `<div class="file-item back" onclick="sidebarGoBack()">📁 ..</div>`;
             }
             if (sorted.length === 0) {
-                html += `<div style="padding:10px 12px;font-size:11px;color:#555;font-style:italic;">Dossier vide</div>`;
+                html += `<div style="padding:14px 12px;font-size:11px;color:#444;font-style:italic;">No files — click ＋ to create one</div>`;
             }
-
             sorted.forEach(item => {
                 const icon = item.isDirectory ? '📁' : (item.name.endsWith('.hs') ? 'λ' : '📄');
-                const activeClass = item.fullPath === selectedFilePath ? 'active' : '';
-                const dirClass    = item.isDirectory ? 'is-dir' : '';
-                const sp = item.fullPath.replace(/\\/g, '/').replace(/'/g, "\\'");
+                const sp = item.fullPath.replace(/'/g, "\\'");
                 const sn = item.name.replace(/'/g, "\\'");
-
-                const clickAction = item.isDirectory
+                const action = item.isDirectory
                     ? `sidebarNavigate('${sp}')`
                     : `selectFile('${sp}', '${sn}')`;
-
-                // Bouton ▶ visible au hover uniquement sur les .hs
                 const compileBtn = (!item.isDirectory && item.name.endsWith('.hs'))
-                    ? `<span class="compile-ico" onclick="event.stopPropagation(); runWorkspaceFile('${sp}', '${sn}')" title="Compiler ce fichier">▶</span>`
+                    ? `<span class="compile-ico" onclick="event.stopPropagation();runWorkspaceFile('${sp}','${sn}')" title="Compiler">▶</span>`
                     : '';
-
-                html += `
-                    <div class="file-item ${dirClass} ${activeClass}" onclick="${clickAction}">
-                        <div class="file-item-label">${icon} ${item.name}</div>
-                        ${compileBtn}
-                    </div>`;
+                html += `<div class="file-item ${item.isDirectory ? 'is-dir' : ''} ${item.fullPath === selectedFilePath ? 'active' : ''}" onclick="${action}">
+                    <div class="file-item-label">${icon} ${item.name}</div>${compileBtn}
+                </div>`;
             });
-
             document.getElementById('fileList').innerHTML = html;
         } catch (e) {
             document.getElementById('fileList').innerHTML =
-                `<div style="padding:10px;color:#f44;font-size:11px;">Erreur connexion Docker</div>`;
+                `<div style="padding:10px;color:#f44;font-size:11px;">Connection error</div>`;
         }
     }
 
-    function sidebarNavigate(fullPath) {
-        currentSidebarPath = fullPath;
-        refreshFiles();
-    }
-
+    function sidebarNavigate(fp) { currentSidebarPath = fp; refreshFiles(); }
     function sidebarGoBack() {
         const parts = currentSidebarPath.split('/').filter(p => p);
         parts.pop();
@@ -299,152 +477,109 @@
         refreshFiles();
     }
 
-    // Sélectionne un fichier et le charge dans l'éditeur
     async function selectFile(fullPath, fileName) {
         try {
-            const res = await fetch(`/workspace/file?name=${encodeURIComponent(fullPath)}`);
-            if (!res.ok) throw new Error(await res.text());
-
-            window.editor.setValue(await res.text());
-
+            const r = await fetch(`/workspace/file?name=${encodeURIComponent(fullPath)}`);
+            if (!r.ok) throw new Error(await r.text());
+            window.editor.setValue(await r.text());
             const ext = fileName.split('.').pop().toLowerCase();
-            const langMap = { hs: 'haskell', json: 'json', md: 'markdown' };
-            monaco.editor.setModelLanguage(window.editor.getModel(), langMap[ext] || 'plaintext');
-
+            monaco.editor.setModelLanguage(window.editor.getModel(), { hs: 'haskell', json: 'json', md: 'markdown' }[ext] || 'plaintext');
+            // Clear old GHC markers when switching files
+            monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
             selectedFilePath = fullPath;
             selectedFileName = fileName;
-            activeFileEl.textContent = '> ' + fileName;
-
-            // Active le bouton RUN fichier si c'est un .hs
-            runFileBtn.disabled = !fileName.endsWith('.hs');
-
+            document.getElementById('activeFile').textContent = '> ' + fileName;
+            document.getElementById('runFileBtn').disabled = !fileName.endsWith('.hs');
             refreshFiles();
-        } catch (e) {
-            alert('Erreur ouverture : ' + e.message);
-        }
+        } catch (e) { alert('Error: ' + e.message); }
     }
 
-    // ══════════════════════════════════════
-    //  SAUVEGARDE
-    // ══════════════════════════════════════
-    saveBtn.onclick = async () => {
-        if (!selectedFilePath) return alert("Aucun fichier sélectionné dans la sidebar");
-        const res = await fetch('/workspace/save', {
+    // ── SAVE ──
+    document.getElementById('saveBtn').onclick = async () => {
+        if (!selectedFilePath) return alert("No file selected");
+        const r = await fetch('/workspace/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filePath: selectedFilePath, content: window.editor.getValue() })
         });
-        if (res.ok) {
-            setStatus('Sauvegardé ✓', '#4ec9b0');
-            setTimeout(() => setStatus('', '#888'), 2000);
-        } else {
-            setStatus('Erreur sauvegarde', '#f44');
-        }
+        if (r.ok) { setStatus('Saved ✓', '#34d399'); setTimeout(() => setStatus('', '#888'), 2000); }
+        else setStatus('Save error', '#f87171');
     };
 
-    // ══════════════════════════════════════
-    //  MODAL CRÉATION FICHIER
-    // ══════════════════════════════════════
+    // ── MODAL CRÉATION ──
     document.getElementById('newFileBtn').onclick = openModal;
-
     function openModal() {
-        // Popule le select des dossiers
         const sel = document.getElementById('modalDir');
-        sel.innerHTML = `<option value="lecture">lecture/ (racine workspace)</option>`;
-        allDirs.forEach(d => {
-            sel.innerHTML += `<option value="${d}">${d}/</option>`;
-        });
+        sel.innerHTML = `<option value="">/ (racine)</option>`;
+        allDirs.forEach(d => { sel.innerHTML += `<option value="${d}">${d}/</option>`; });
         document.getElementById('modalName').value = '';
         document.getElementById('modalOverlay').classList.add('open');
         setTimeout(() => document.getElementById('modalName').focus(), 100);
     }
-
-    function closeModal() {
-        document.getElementById('modalOverlay').classList.remove('open');
-    }
-
-    // Fermer en cliquant l'overlay
-    document.getElementById('modalOverlay').onclick = (e) => {
-        if (e.target === document.getElementById('modalOverlay')) closeModal();
-    };
+    function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+    document.getElementById('modalOverlay').onclick = (e) => { if (e.target.id === 'modalOverlay') closeModal(); };
 
     async function confirmCreate() {
         const dir  = document.getElementById('modalDir').value;
         const name = document.getElementById('modalName').value.trim();
-
-        if (!name) return alert("Entrez un nom de fichier");
-        if (!name.endsWith('.hs')) return alert("Le fichier doit se terminer par .hs");
-        if (!/^[A-Z]/.test(name)) return alert("Le nom doit commencer par une majuscule (convention Haskell)");
+        if (!name) return alert("Enter a file name");
+        if (!name.endsWith('.hs')) return alert("The file must end with .hs");
+        if (!/^[A-Z]/.test(name)) return alert("The name must start with an uppercase letter");
 
         const moduleName = name.replace('.hs', '');
-        const filePath   = `${dir}/${name}`;
-        const content    = `module ${moduleName} where\n\nimport PlutusTx qualified\nimport PlutusLedgerApi.V2\n\n-- | Validateur Plutus\nvalidatorScript :: Validator\nvalidatorScript = undefined\n`;
+        const filePath   = dir ? `${dir}/${name}` : name;
+        const content    = `module ${moduleName} where\n\nimport PlutusTx qualified\nimport PlutusTx.Prelude\nimport PlutusLedgerApi.V2\n\n{-# INLINABLE mkValidator #-}\nmkValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()\nmkValidator _ _ _ = ()\n\nvalidatorScript :: Validator\nvalidatorScript = mkValidatorScript\n    $$(PlutusTx.compile [|| mkValidator ||])\n`;
 
-        const res = await fetch('/workspace/create', {
+        const r = await fetch('/workspace/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filePath, content })
         });
-
-        if (!res.ok) {
-            alert('Erreur création : ' + await res.text());
-            return;
-        }
-
+        if (!r.ok) return alert('Error: ' + await r.text());
         closeModal();
-
-        // Navigation vers le dossier du fichier créé et ouverture
         currentSidebarPath = dir;
         await refreshFiles();
         await selectFile(filePath, name);
     }
-
-    // Enter dans le modal = confirmer
     document.getElementById('modalName').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') confirmCreate();
         if (e.key === 'Escape') closeModal();
     });
 
-    // ══════════════════════════════════════
-    //  COMPILATION
-    // ══════════════════════════════════════
-
-    // Bouton RUN éditeur (comportement original)
-    runEditorBtn.onclick = () => runCode({ code: window.editor.getValue() });
-
-    // Bouton RUN fichier (fichier workspace sélectionné)
-    runFileBtn.onclick = () => {
-        if (!selectedFileName) return;
-        runWorkspaceFile(selectedFilePath, selectedFileName);
+    // ── COMPILATION ──
+    // document.getElementById('runEditorBtn').onclick = () => runCode({ code: window.editor.getValue() });
+    document.getElementById('runFileBtn').onclick   = () => {
+        if (selectedFileName) runWorkspaceFile(selectedFilePath, selectedFileName);
     };
 
-    // Compile un .hs directement depuis le workspace (icône ▶ dans sidebar)
     function runWorkspaceFile(fullPath, fileName) {
-        // Sauvegarde auto si c'est le fichier ouvert dans l'éditeur
         if (fullPath === selectedFilePath) {
             fetch('/workspace/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filePath: fullPath, content: window.editor.getValue() })
-            }).then(() => runCode({ fileName: path.basename(fileName) }));
+            }).then(() => runCode({ fileName }));
         } else {
-            runCode({ fileName: fileName });
+            runCode({ fileName });
         }
     }
 
-    // Fonction commune de compilation via SSE
     async function runCode(body) {
-        runEditorBtn.disabled = true;
-        runFileBtn.disabled   = true;
-        setStatus('Compilation...', '#f0a500');
-        logsEl.textContent = '';
-        stdEl.textContent  = '';
-        cborEl.textContent = '';
+        // document.getElementById('runEditorBtn').disabled = true;
+        document.getElementById('runFileBtn').disabled   = true;
+        setStatus('Compiling...', '#f0a500');
+        document.getElementById('logs').textContent = '';
+        document.getElementById('std').textContent  = '';
+        document.getElementById('cbor').textContent = '';
+        // Clear previous GHC markers
+        if (window.editor && window.setGHCMarkers) {
+            monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
+        }
 
         let hasError = false;
-
+        let fullLog  = '';  // accumulate full GHC output for marker parsing
         try {
-            const response = await fetch('http://localhost:3000/run', {
+            const response = await fetch('/run', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
@@ -454,60 +589,62 @@
             const decoder = new TextDecoder();
             let buffer = '';
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-
+            function processLines(buf) {
+                const lines = buf.split('\n');
+                const remaining = lines.pop(); // last incomplete line
                 for (const line of lines) {
                     if (!line.startsWith('data: ')) continue;
                     try {
                         const { type, output } = JSON.parse(line.slice(6));
                         if (type === 'compilation') {
-                            logsEl.textContent += output;
-                            logsEl.scrollTop = logsEl.scrollHeight;
-                            if (output.toLowerCase().includes('error')) hasError = true;
+                            document.getElementById('logs').textContent += output;
+                            document.getElementById('logs').scrollTop = document.getElementById('logs').scrollHeight;
+                            fullLog += output;
+                            if (/^.*error:/.test(output) || output.includes('Build failed') || output.includes('exit code')) hasError = true;
                         } else if (type === 'cbor') {
-                            cborEl.textContent = output;
+                            document.getElementById('cbor').textContent = output;
                         } else {
-                            stdEl.textContent += output;
-                            stdEl.scrollTop = stdEl.scrollHeight;
+                            document.getElementById('std').textContent += output;
+                            document.getElementById('std').scrollTop = document.getElementById('std').scrollHeight;
                         }
                     } catch (e) {}
                 }
+                return remaining;
             }
 
-            setStatus(hasError ? 'Erreur' : 'Succès ✓', hasError ? '#f44747' : '#4ec9b0');
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    // Flush any remaining buffered data
+                    if (buffer.trim()) processLines(buffer + '\n');
+                    // Parse GHC errors and show inline markers in editor
+                    if (window.setGHCMarkers) window.setGHCMarkers(fullLog);
+                    break;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                buffer = processLines(buffer);
+            }
+            setStatus(hasError ? 'Build failed' : 'Success ✓', hasError ? '#f87171' : '#34d399');
         } catch (e) {
-            logsEl.textContent += `\nErreur réseau : ${e.message}`;
-            setStatus('Erreur réseau', '#f44747');
+            document.getElementById('logs').textContent += `\nNetwork error: ${e.message}`;
+            setStatus('Network error', '#f87171');
         }
-
-        runEditorBtn.disabled = false;
-        runFileBtn.disabled   = !selectedFileName?.endsWith('.hs');
+        // document.getElementById('runEditorBtn').disabled = false;
+        document.getElementById('runFileBtn').disabled   = !selectedFileName?.endsWith('.hs');
     }
 
-    // ══════════════════════════════════════
-    //  UTILS
-    // ══════════════════════════════════════
     function setStatus(msg, color) {
-        statusEl.textContent  = msg;
-        statusEl.style.color  = color || '#888';
+        document.getElementById('statusEl').textContent = msg;
+        document.getElementById('statusEl').style.color = color;
     }
-
     function copyCBOR() {
-        const text = cborEl.textContent;
+        const text = document.getElementById('cbor').textContent;
         if (!text) return;
         navigator.clipboard.writeText(text).then(() => {
-            cborEl.style.outline = '1px solid #4ec9b0';
-            setTimeout(() => cborEl.style.outline = '', 700);
+            document.getElementById('cbor').style.outline = '1px solid #34d399';
+            setTimeout(() => document.getElementById('cbor').style.outline = '', 700);
         });
     }
-
-    // Polyfill path.basename côté browser
-    const path = { basename: (p) => p.split('/').filter(Boolean).pop() || p };
 </script>
 </body>
 </html>
