@@ -1,110 +1,131 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
-<meta charset="UTF-8">
-<title>Plutus Playground</title>
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs/loader.js"></script>
-<style>
-  body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
-  #editor { height: 60%; width: 100%; }
-  #controls { padding: 5px; background: #f3f3f3; display: flex; gap: 10px; align-items: center; }
-  #output { height: 35%; width: 100%; background: #1e1e1e; color: #d4d4d4; padding: 10px; overflow-y: auto; white-space: pre-wrap; box-sizing: border-box; }
-  #status { font-size: 13px; color: #555; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-</style>
+    <meta charset="UTF-8">
+    <title>Plutus Architect IDE</title>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs/loader.js"></script>
+    <style>
+        :root { --bg: #1e1e1e; --panel: #252526; --border: #333; --accent: #007acc; }
+        body, html { margin: 0; padding: 0; height: 100vh; background: var(--bg); color: #d4d4d4; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        
+        .layout { display: flex; flex-direction: column; height: 100vh; }
+        
+        /* Toolbar */
+        .toolbar { height: 50px; background: #333; display: flex; align-items: center; padding: 0 20px; gap: 15px; border-bottom: 1px solid #000; }
+        button { background: var(--accent); color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:disabled { background: #555; }
+
+        /* Editor Section */
+        #editor { flex: 2; border-bottom: 2px solid var(--border); }
+
+        /* Results Section */
+        .results { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: var(--border); min-height: 0; }
+        
+        .panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+        .panel-header { background: #2d2d2d; padding: 8px 12px; font-size: 11px; text-transform: uppercase; color: #aaa; border-bottom: 1px solid var(--border); }
+        
+        /* SCROLLABLE CONTENT */
+        .panel-content { 
+            flex: 1; 
+            overflow-y: auto; 
+            padding: 12px; 
+            font-family: 'Consolas', 'Monaco', monospace; 
+            font-size: 12px; 
+            white-space: pre-wrap; 
+            word-break: break-all;
+        }
+
+        .comp-log { color: #85d7ff; }
+        .std-log { color: #b5cea8; }
+        .cbor-log { color: #ce9178; }
+
+        /* Custom Scrollbar */
+        .panel-content::-webkit-scrollbar { width: 8px; }
+        .panel-content::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+    </style>
 </head>
 <body>
 
-<div id="editor"></div>
+<div class="layout">
+    <div class="toolbar">
+        <button id="runBtn">🔨 COMPILE & RUN</button>
+        <span id="status" style="font-size: 12px; color: #888;">Prêt</span>
+    </div>
 
-<div id="controls">
-  <button id="runBtn" type="button">▶ Run</button>
-  <span id="status"></span>
+    <div id="editor"></div>
+
+    <div class="results">
+        <div class="panel">
+            <div class="panel-header">Compilation (GHC)</div>
+            <div id="logs" class="panel-content comp-log"></div>
+        </div>
+        <div class="panel">
+            <div class="panel-header">Standard Output</div>
+            <div id="std" class="panel-content std-log"></div>
+        </div>
+        <div class="panel">
+            <div class="panel-header">Plutus CBOR</div>
+            <div id="cbor" class="panel-content cbor-log"></div>
+        </div>
+    </div>
 </div>
 
-<pre id="output">Output will appear here...</pre>
-
 <script>
-  const outputEl = document.getElementById('output');
-  const statusEl = document.getElementById('status');
+    const logsEl = document.getElementById('logs');
+    const stdEl = document.getElementById('std');
+    const cborEl = document.getElementById('cbor');
+    const runBtn = document.getElementById('runBtn');
 
-  // Restaure le dernier output au chargement
-  outputEl.textContent = localStorage.getItem('lastOutput') || 'Output will appear here...';
-
-  require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs' }});
-  require(['vs/editor/editor.main'], function() {
-    window.editor = monaco.editor.create(document.getElementById('editor'), {
-      value: `module Main where\n\nmain :: IO ()\nmain = putStrLn "Hello Plutus!"`,
-      language: 'haskell',
-      theme: 'vs-dark',
-      automaticLayout: true
+    require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs' }});
+    require(['vs/editor/editor.main'], function() {
+        window.editor = monaco.editor.create(document.getElementById('editor'), {
+            value: "module MyContract where\n\n-- validatorScript = ...\nmain = putStrLn \"Hello Plutus\"",
+            language: 'haskell',
+            theme: 'vs-dark',
+            automaticLayout: true,
+            fontSize: 14,
+            scrollbar: { vertical: 'visible' }
+        });
     });
-  });
 
-  document.getElementById('runBtn').addEventListener('click', async (e) => {
-    e.preventDefault();
-    const btn = document.getElementById('runBtn');
-    btn.disabled = true;
-    statusEl.textContent = 'Compiling...';
+    runBtn.onclick = async () => {
+        runBtn.disabled = true;
+        logsEl.textContent = ""; stdEl.textContent = ""; cborEl.textContent = "";
+        
+        const response = await fetch('http://localhost:3000/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: window.editor.getValue() })
+        });
 
-    const code = window.editor?.getValue();
-    outputEl.textContent = '';
-    localStorage.setItem('lastOutput', '');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-    try {
-      const resp = await fetch('http://localhost:3000/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code })
-      });
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value);
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
 
-      if (!resp.ok) {
-        const err = await resp.json();
-        outputEl.textContent = err.output || 'Server error';
-        localStorage.setItem('lastOutput', outputEl.textContent);
-        return;
-      }
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let fullOutput = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const json = JSON.parse(line.slice(6));
-              fullOutput += json.output;
-              fullOutput.replace("undefined", "");
-              outputEl.textContent = fullOutput;
-              localStorage.setItem('lastOutput', fullOutput);
-              outputEl.scrollTop = outputEl.scrollHeight;
-            } catch {}
-          }
-          if (line.startsWith('event: done')) {
-            statusEl.textContent = 'Done ✓';
-            btn.disabled = false;
-          }
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const { type, output } = JSON.parse(line.slice(6));
+                    if (type === 'compilation') {
+                        logsEl.textContent += output;
+                        logsEl.scrollTop = logsEl.scrollHeight;
+                    } else if (type === 'cbor') {
+                        cborEl.textContent = output;
+                    } else {
+                        stdEl.textContent += output;
+                        stdEl.scrollTop = stdEl.scrollHeight;
+                    }
+                }
+            }
         }
-      }
-    } catch (err) {
-      const errMsg = `Error: ${err.message}`;
-      outputEl.textContent += '\n' + errMsg;
-      localStorage.setItem('lastOutput', outputEl.textContent);
-      statusEl.textContent = 'Failed ✗';
-    } finally {
-      btn.disabled = false;
-    }
-  });
+        runBtn.disabled = false;
+    };
 </script>
-
 </body>
 </html>
