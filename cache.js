@@ -1,27 +1,16 @@
+/**
+ * cache.js — CBOR compilation cache backed by Redis (DB 1)
+ *
+ * Replaces the previous cache.json file-based implementation.
+ * Keys: sha256 of normalised Haskell source
+ * TTL:  30 days (auto-expiry, no manual eviction needed)
+ */
+
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { cacheClient } from './redis.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
-
-const CACHE_FILE    = path.join(__dirname, 'cache.json');
-const MAX_ENTRIES   = 500;   // max number of cached compilations
-
-// ── Helpers ──────────────────────────────────────
-
-function readCache() {
-    if (!fs.existsSync(CACHE_FILE)) return {};
-    try { return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); }
-    catch (e) { return {}; }
-}
-
-function writeCache(data) {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
-}
-
-// ── Public API ───────────────────────────────────
+const TTL_SECONDS = 30 * 24 * 60 * 60;   // 30 days
+const KEY_PREFIX  = 'cbor:';
 
 /**
  * Compute a deterministic SHA-256 hash of Haskell source code.
@@ -34,49 +23,34 @@ export function hashSource(source) {
 
 /**
  * Look up a compiled CBOR result by source hash.
- * Returns the cache entry { cborHex, cachedAt } or null.
+ * Returns { cborHex, cachedAt } or null on miss.
  */
-export function getCache(hash) {
-    const cache = readCache();
-    const entry = cache[hash];
-    if (!entry) return null;
-    // Bump last-accessed so LRU eviction keeps hot entries
-    entry.lastAccessed = new Date().toISOString();
-    writeCache(cache);
-    return entry;
-}
-
-/**
- * Store a successful compilation result.
- * Evicts the oldest entry when MAX_ENTRIES is exceeded (LRU).
- */
-export function setCache(hash, cborHex) {
-    const cache = readCache();
-
-    // Evict oldest if over limit
-    const keys = Object.keys(cache);
-    if (keys.length >= MAX_ENTRIES) {
-        const oldest = keys.sort((a, b) => {
-            const ta = cache[a].lastAccessed || cache[a].cachedAt;
-            const tb = cache[b].lastAccessed || cache[b].cachedAt;
-            return new Date(ta) - new Date(tb);
-        })[0];
-        delete cache[oldest];
+export async function getCache(hash) {
+    const raw = await cacheClient.get(KEY_PREFIX + hash);
+    if (!raw) return null;
+    try {
+        // Refresh TTL on every hit (keeps hot entries alive)
+        await cacheClient.expire(KEY_PREFIX + hash, TTL_SECONDS);
+        return JSON.parse(raw);
+    } catch {
+        return null;
     }
-
-    cache[hash] = {
-        cborHex,
-        cachedAt:     new Date().toISOString(),
-        lastAccessed: new Date().toISOString(),
-    };
-    writeCache(cache);
 }
 
 /**
- * Return basic cache stats (for logging).
+ * Store a successful compilation result with 30-day TTL.
  */
-export function cacheStats() {
-    const cache = readCache();
-    const keys  = Object.keys(cache);
-    return { entries: keys.length, maxEntries: MAX_ENTRIES };
+export async function setCache(hash, cborHex) {
+    const entry = { cborHex, cachedAt: new Date().toISOString() };
+    await cacheClient.set(KEY_PREFIX + hash, JSON.stringify(entry), {
+        EX: TTL_SECONDS,
+    });
+}
+
+/**
+ * Basic cache stats for display in SSE output.
+ */
+export async function cacheStats() {
+    const keys = await cacheClient.keys(KEY_PREFIX + '*');
+    return { entries: keys.length, ttlDays: Math.round(TTL_SECONDS / 86400) };
 }

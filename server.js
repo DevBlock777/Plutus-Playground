@@ -5,11 +5,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 import session from 'express-session';
-import FileStore from 'session-file-store';
+import { createClient } from 'redis';
+import { RedisStore } from 'connect-redis';
 import { v4 as uuidv4 } from 'uuid';
 import { extractModuleName } from './utils.js';
 import { registerRoutes, requireAuth } from './auth.js';
 import { hashSource, getCache, setCache, cacheStats } from './cache.js';
+import { connectRedis, sessionClient } from './redis.js';
 
 const app = express();
 const PORT = 3000;
@@ -20,28 +22,19 @@ const __dirname = path.dirname(__filename);
 // ── Middleware ──
 app.use(json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ origin: false })); // SSR : pas besoin de CORS cross-origin
+app.use(cors({ origin: false }));
 
-// ── Sessions persistées dans ./sessions/ ──
-const SessionFileStore = FileStore(session);
-const SESSIONS_DIR = path.join(__dirname, 'sessions');
-if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
-
+// ── Sessions in Redis DB 0 ──
 app.use(session({
-    store: new SessionFileStore({
-        path: SESSIONS_DIR,
-        ttl: 7 * 24 * 60 * 60,   // 7 jours en secondes
-        reapInterval: 3600,        // nettoyage des sessions expirées toutes les heures
-        logFn: () => {}            // silencieux
-    }),
-    name: 'plutus.sid',
+    store: new RedisStore({ client: sessionClient }),
+    name:   'plutus.sid',
     secret: process.env.SESSION_SECRET || 'plutus-session-secret-change-in-prod',
     resave: false,
     saveUninitialized: false,
     cookie: {
-        httpOnly: true,            // inaccessible depuis JS côté client
-        secure: false,             // passer à true si HTTPS en prod
-        maxAge: 7 * 24 * 60 * 60 * 1000  // 7 jours en ms
+        httpOnly: true,
+        secure:   false,   // set true behind HTTPS
+        maxAge:   7 * 24 * 60 * 60 * 1000   // 7 days
     }
 }));
 
@@ -155,7 +148,7 @@ app.post('/workspace/save', requireAuth, (req, res) => {
 // ══════════════════════════════════════════
 //  COMPILATION
 // ══════════════════════════════════════════
-app.post('/run', requireAuth, (req, res) => {
+app.post('/run', requireAuth, async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -186,40 +179,41 @@ app.post('/run', requireAuth, (req, res) => {
                     return endSSE(res);
                 }
 
-                // Check cache on original source (before injection)
-                const hash  = hashSource(sourceCode);
-                const entry = getCache(hash);
-                if (entry) {
-                    sendSSE(res, `> Cache hit — skipping compilation.\n`, 'compilation');
-                    sendSSE(res, `> CBOR retrieved from cache.\n`, 'stdout');
-                    sendSSE(res, entry.cborHex, 'cbor');
-                    sendSSE(res, `> Cache: ${cacheStats().entries}/${cacheStats().maxEntries} entries.\n`, 'stdout');
-                    return endSSE(res);
-                }
+                (async () => {
+                    // Check cache on original source (before injection)
+                    const hash  = hashSource(sourceCode);
+                    const entry = await getCache(hash);
+                    if (entry) {
+                        sendSSE(res, `> Cache hit — skipping compilation.\n`, 'compilation');
+                        sendSSE(res, `> CBOR retrieved from cache.\n`, 'stdout');
+                        sendSSE(res, entry.cborHex, 'cbor');
+                        const stats = await cacheStats();
+                        sendSSE(res, `> Cache: ${stats.entries} entries (TTL ${stats.ttlDays}d).\n`, 'stdout');
+                        return endSSE(res);
+                    }
 
-                sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
+                    sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
 
-                // Build augmented source: user code + injected CBOR block
-                const augmented   = buildAugmentedSource(sourceCode, moduleName, jobId, validatorName);
-                const lectureDir  = `/app/code/wspace/lecture`;
-                const tmpSrc      = path.join(TMP_DIR, `${moduleName}_${jobId}.hs`);
-                fs.writeFileSync(tmpSrc, augmented);
+                    const augmented  = buildAugmentedSource(sourceCode, moduleName, jobId, validatorName);
+                    const lectureDir = `/app/code/wspace/lecture`;
+                    const tmpSrc     = path.join(TMP_DIR, `${moduleName}_${jobId}.hs`);
+                    fs.writeFileSync(tmpSrc, augmented);
 
-                // Copy augmented file as Main.hs (module is now "module Main")
-                const dockerCmd = `docker cp "${tmpSrc}" plutus-runner:${lectureDir}/Main.hs && \
+                    const dockerCmd = `docker cp "${tmpSrc}" plutus-runner:${lectureDir}/Main.hs && \
 docker exec plutus-runner bash -lc "
   source /root/.nix-profile/etc/profile.d/nix.sh && \
   cd /app/code/wspace && \
   nix develop . --command cabal run alw-exe 2>&1
 "`;
-                const child = exec(dockerCmd, { maxBuffer: 1024 * 1024 * 50 });
-                child.stdout.on('data', (d) => sendSSE(res, d, d.includes('written successfully') ? 'stdout' : 'compilation'));
-                child.stderr.on('data', (d) => sendSSE(res, d, 'compilation'));
-                child.on('close', (code) => {
-                    if (fs.existsSync(tmpSrc)) fs.unlinkSync(tmpSrc);
-                    handleClose(res, code, jobId, hash);
-                });
-                req.on('close', () => child.kill());
+                    const child = exec(dockerCmd, { maxBuffer: 1024 * 1024 * 50 });
+                    child.stdout.on('data', (d) => sendSSE(res, d, d.includes('written successfully') ? 'stdout' : 'compilation'));
+                    child.stderr.on('data', (d) => sendSSE(res, d, 'compilation'));
+                    child.on('close', (code) => {
+                        if (fs.existsSync(tmpSrc)) fs.unlinkSync(tmpSrc);
+                        handleClose(res, code, jobId, hash);
+                    });
+                    req.on('close', () => child.kill());
+                })();
             });
         });
         return;
@@ -235,14 +229,14 @@ docker exec plutus-runner bash -lc "
 
     // ── Check cache first ──
     const hash  = hashSource(code);
-    const entry = getCache(hash);
+    const entry = await getCache(hash);
 
     if (entry) {
         sendSSE(res, `> Cache hit — skipping compilation.\n`, 'compilation');
         sendSSE(res, `> CBOR retrieved from cache.\n`, 'stdout');
         sendSSE(res, entry.cborHex, 'cbor');
-        const stats = cacheStats();
-        sendSSE(res, `> Cache: ${stats.entries}/${stats.maxEntries} entries.\n`, 'stdout');
+        const stats = await cacheStats();
+        sendSSE(res, `> Cache: ${stats.entries} entries (TTL ${stats.ttlDays}d).\n`, 'stdout');
         return endSSE(res);
     }
 
@@ -326,28 +320,26 @@ main = getCbor
 function handleClose(res, exitCode, jobId, sourceHash = null) {
     if (exitCode === null || exitCode === 0) {
         sendSSE(res, "> Extracting CBOR...\n", 'stdout');
-        exec(`docker exec plutus-runner cat /app/code/wspace/assets/${jobId}output.plutus`, (err, stdout) => {
+        exec(`docker exec plutus-runner cat /app/code/wspace/assets/${jobId}output.plutus`, async (err, stdout) => {
             if (err) {
                 sendSSE(res, `> Error reading CBOR: ${err.message}\n`, 'compilation');
             } else {
                 try {
                     const parsed  = JSON.parse(stdout);
-                    const cborHex = parsed.cborHex || stdout;
+                    const cborHex = parsed.cborHex || stdout.trim();
                     sendSSE(res, cborHex, 'cbor');
                     sendSSE(res, "> CBOR generated successfully.\n", 'stdout');
-
-                    // ── Save to cache if we have a hash ──
                     if (sourceHash) {
-                        setCache(sourceHash, cborHex);
-                        const stats = cacheStats();
-                        sendSSE(res, `> Result saved to cache (${stats.entries} entries).\n`, 'stdout');
-                        console.log(`[cache] Saved entry ${sourceHash.slice(0, 8)}… — ${stats.entries}/${stats.maxEntries} entries`);
+                        await setCache(sourceHash, cborHex);
+                        const stats = await cacheStats();
+                        sendSSE(res, `> Result saved to cache (${stats.entries} entries, TTL ${stats.ttlDays}d).\n`, 'stdout');
+                        console.log(`[cache] Saved ${sourceHash.slice(0, 8)}… — ${stats.entries} entries in Redis`);
                     }
                 } catch (e) {
                     const raw = stdout.trim();
                     sendSSE(res, raw, 'cbor');
                     if (sourceHash) {
-                        setCache(sourceHash, raw);
+                        await setCache(sourceHash, raw);
                         sendSSE(res, `> Result saved to cache.\n`, 'stdout');
                     }
                 }
@@ -360,6 +352,14 @@ function handleClose(res, exitCode, jobId, sourceHash = null) {
     }
 }
 
-app.listen(PORT, () => {
-    console.log(`Plutus IDE running on http://localhost:${PORT}`);
-});
+// ── Bootstrap: connect Redis then start HTTP server ──
+connectRedis()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`Plutus IDE running on http://localhost:${PORT}`);
+        });
+    })
+    .catch((err) => {
+        console.error('[Fatal] Could not connect to Redis:', err.message);
+        process.exit(1);
+    });
