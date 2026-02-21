@@ -2,4 +2,9 @@ node_modules
 tmp
 workspaces
 .env
+users.json
+sessions.json
+./sessions
+assets
+sessions
 
