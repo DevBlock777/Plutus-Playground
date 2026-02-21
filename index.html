@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Plutus Playground</title>
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs/loader.js"></script>
+<style>
+  body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  #editor { height: 60%; width: 100%; }
+  #controls { padding: 5px; background: #f3f3f3; display: flex; gap: 10px; align-items: center; }
+  #output { height: 35%; width: 100%; background: #1e1e1e; color: #d4d4d4; padding: 10px; overflow-y: auto; white-space: pre-wrap; box-sizing: border-box; }
+  #status { font-size: 13px; color: #555; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<div id="editor"></div>
+
+<div id="controls">
+  <button id="runBtn" type="button">▶ Run</button>
+  <span id="status"></span>
+</div>
+
+<pre id="output">Output will appear here...</pre>
+
+<script>
+  const outputEl = document.getElementById('output');
+  const statusEl = document.getElementById('status');
+
+  // Restaure le dernier output au chargement
+  outputEl.textContent = localStorage.getItem('lastOutput') || 'Output will appear here...';
+
+  require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs' }});
+  require(['vs/editor/editor.main'], function() {
+    window.editor = monaco.editor.create(document.getElementById('editor'), {
+      value: `module Main where\n\nmain :: IO ()\nmain = putStrLn "Hello Plutus!"`,
+      language: 'haskell',
+      theme: 'vs-dark',
+      automaticLayout: true
+    });
+  });
+
+  document.getElementById('runBtn').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+    statusEl.textContent = 'Compiling...';
+
+    const code = window.editor?.getValue();
+    outputEl.textContent = '';
+    localStorage.setItem('lastOutput', '');
+
+    try {
+      const resp = await fetch('http://localhost:3000/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        outputEl.textContent = err.output || 'Server error';
+        localStorage.setItem('lastOutput', outputEl.textContent);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullOutput = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(line.slice(6));
+              fullOutput += json.output;
+              fullOutput.replace("undefined", "");
+              outputEl.textContent = fullOutput;
+              localStorage.setItem('lastOutput', fullOutput);
+              outputEl.scrollTop = outputEl.scrollHeight;
+            } catch {}
+          }
+          if (line.startsWith('event: done')) {
+            statusEl.textContent = 'Done ✓';
+            btn.disabled = false;
+          }
+        }
+      }
+    } catch (err) {
+      const errMsg = `Error: ${err.message}`;
+      outputEl.textContent += '\n' + errMsg;
+      localStorage.setItem('lastOutput', outputEl.textContent);
+      statusEl.textContent = 'Failed ✗';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>
