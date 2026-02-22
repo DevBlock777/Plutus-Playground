@@ -40,6 +40,16 @@
         #connectWalletBtn.connected:hover { background:#7f1d1d; }
         #connectWalletBtn.connected:hover::after { content:' (disconnect)'; font-size:10px; }
 
+        #templateSelect {
+            background:#1a1a2e; color:#9ca3af; border:1px solid #333;
+            border-radius:4px; padding:5px 8px; font-size:12px;
+            cursor:pointer; flex-shrink:0; max-width:160px;
+        }
+        #templateSelect:focus { outline:none; border-color:var(--accent); }
+        #downloadBtn { background:#1e3a5f !important; }
+        #downloadBtn:hover:not(:disabled) { background:#1e4976 !important; }
+        #downloadBtn:disabled { opacity:0.35; }
+
         #validatorNameInput {
             background:#2d2d3d; border:1px solid #3a3a5c; color:#ddd;
             padding:6px 10px; border-radius:4px; font-family:monospace; font-size:12px;
@@ -286,8 +296,18 @@
 
         <div class="sep"></div>
 
+        <!-- Templates dropdown (Outcome #69787) -->
+        <select id="templateSelect" title="Load a template">
+            <option value="">📄 Templates…</option>
+        </select>
+
+        <div class="sep"></div>
+
         <input id="validatorNameInput" type="text" placeholder="ex: mValidator" title="Name of your validator function (BuiltinData -> BuiltinData -> BuiltinData -> ())" />
         <button id="runFileBtn" class="run-file" disabled>▶ Compile</button>
+
+        <!-- Download button (Outcome #69788 / #69789) -->
+        <button id="downloadBtn" class="sec" disabled title="Download .plutus artifact">⬇ .plutus</button>
 
         <div class="sep"></div>
         <button id="saveBtn" class="sec">💾 Save</button>
@@ -298,6 +318,10 @@
 
         <div class="spacer"></div>
 
+        <!-- Toolchain version (Outcome #69789) -->
+        <span id="versionBadge" title="Toolchain versions" style="font-size:10px;color:#444;cursor:pointer;flex-shrink:0;" onclick="showVersions()">GHC…</span>
+
+        <div class="sep"></div>
         <div class="user-badge">
             <div class="user-avatar" id="userAvatar">?</div>
             <span id="userLabel">Loading...</span>
@@ -416,6 +440,7 @@ let selectedFilePath   = null;
 let selectedFileName   = null;
 let currentUsername    = "";
 let allDirs            = [];
+let templateMode       = false;   // true = editor has template content, no file backing it
 
 // Wallet state
 let lucidInstance = null;
@@ -771,6 +796,15 @@ async function selectFile(fullPath, fileName) {
         monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
         selectedFilePath = fullPath;
         selectedFileName = fileName;
+
+        // Exit template mode — file takes over
+        if (templateMode) {
+            templateMode = false;
+            _preTemplateSnapshot = null;
+            document.getElementById('activeFile').style.color = '#a78bfa';
+            document.getElementById('templateSelect').value = '';
+        }
+
         document.getElementById('activeFile').textContent = '> ' + fileName;
         document.getElementById('runFileBtn').disabled = !fileName.endsWith('.hs');
         refreshFiles();
@@ -814,7 +848,7 @@ async function confirmCreate() {
 
     const mod  = name.replace('.hs', '');
     const fp   = dir ? `${dir}/${name}` : name;
-    const content = `module ${mod} where\n\nimport PlutusTx \nimport PlutusTx.Prelude\nimport Plutus.V2.Ledger.Api\n\n{-# INLINABLE mkValidator #-}\nmkValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()\nmkValidator _ _ _ = ()\n`;
+    const content = `module ${mod} where\n\nimport PlutusTx qualified\nimport PlutusTx.Prelude\nimport PlutusLedgerApi.V2\n\n{-# INLINABLE mkValidator #-}\nmkValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()\nmkValidator _ _ _ = ()\n\nvalidatorScript :: Validator\nvalidatorScript = mkValidatorScript\n    $$(PlutusTx.compile [|| mkValidator ||])\n`;
 
     const r = await fetch('/workspace/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -833,21 +867,26 @@ document.getElementById('modalName').addEventListener('keydown', e => {
 //  COMPILATION
 // ═══════════════════════════════════════════════════
 document.getElementById('runFileBtn').onclick = () => {
-    if (selectedFileName) runWorkspaceFile(selectedFilePath, selectedFileName);
+    const vName = document.getElementById('validatorNameInput').value.trim();
+    if (!vName) return notify("Please enter a validator name in the toolbar input field.", 'warn');
+
+    if (templateMode) {
+        // Template mode: compile editor content directly (no file, no save)
+        runCode({ code: window.editor.getValue(), validatorName: vName });
+    } else if (selectedFileName) {
+        runWorkspaceFile(selectedFilePath, selectedFileName);
+    }
 };
 
 function runWorkspaceFile(fullPath, fileName) {
     const vName = document.getElementById('validatorNameInput').value.trim();
     if (!vName) return notify("Please enter a validator name in the toolbar input field.", 'warn');
 
-    if (fullPath === selectedFilePath) {
-        fetch('/workspace/save', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filePath: fullPath, content: window.editor.getValue() })
-        }).then(() => runCode({ fileName, validatorName: vName }));
-    } else {
-        runCode({ fileName, validatorName: vName });
-    }
+    // Always save current editor content before compiling
+    fetch('/workspace/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath: fullPath, content: window.editor.getValue() })
+    }).then(() => runCode({ fileName, validatorName: vName }));
 }
 
 async function runCode(body) {
@@ -888,6 +927,11 @@ async function runCode(body) {
                     } else if (type === 'cbor') {
                         cborResult = output;
                         document.getElementById('cbor').textContent = output;
+                    } else if (type === 'download') {
+                        // Store download URL and enable button (Outcome #69788 / #69789)
+                        const btn = document.getElementById('downloadBtn');
+                        btn.dataset.url = output;
+                        btn.disabled = false;
                     } else {
                         document.getElementById('std').textContent += output;
                         document.getElementById('std').scrollTop = document.getElementById('std').scrollHeight;
@@ -961,6 +1005,138 @@ function copyPanel(id) {
 
 // Keep legacy name in case called from elsewhere
 function copyCBOR() { copyPanel('cbor'); }
+
+// ═══════════════════════════════════════════════════
+//  TEMPLATES  (Outcome #69787)
+// ═══════════════════════════════════════════════════
+
+// Snapshot of the file that was open before loading a template
+let _preTemplateSnapshot = null;
+
+async function loadTemplates() {
+    try {
+        const res  = await fetch('/templates');
+        if (!res.ok) return;
+        const list = await res.json();
+        const sel  = document.getElementById('templateSelect');
+        list.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value       = t.id;
+            opt.textContent = t.name;
+            opt.title       = t.description;
+            sel.appendChild(opt);
+        });
+
+        sel.addEventListener('change', async () => {
+            const id = sel.value;
+            if (!id) {
+                // User selected "Templates…" → restore previous file if any
+                _restorePreTemplateFile();
+                return;
+            }
+
+            const r = await fetch(`/templates/${id}`);
+            if (!r.ok) return;
+            const t = await r.json();
+
+            // Save a snapshot of the current editor state BEFORE overwriting
+            // Only save once (don't overwrite snapshot if already in template mode)
+            if (!templateMode) {
+                _preTemplateSnapshot = {
+                    content:       window.editor ? window.editor.getValue() : '',
+                    filePath:      selectedFilePath,
+                    fileName:      selectedFileName,
+                    validatorName: document.getElementById('validatorNameInput').value,
+                    activeLabel:   document.getElementById('activeFile').textContent,
+                };
+            }
+
+            // Enter template mode
+            templateMode = true;
+            if (window.editor) window.editor.setValue(t.source);
+            document.getElementById('validatorNameInput').value = t.validatorFn || '';
+            document.getElementById('runFileBtn').disabled = false;
+            document.getElementById('activeFile').textContent = `[template: ${t.name}]`;
+            document.getElementById('activeFile').style.color = '#fbbf24';
+            setStatus('Template loaded — compile without saving', '#fbbf24');
+            notify(`Template "${t.name}" loaded.\nCompile directly or open a file to go back.`, 'info', 4000);
+        });
+    } catch (_) {}
+}
+
+function _restorePreTemplateFile() {
+    if (!_preTemplateSnapshot) {
+        // No snapshot — just exit template mode
+        templateMode = false;
+        document.getElementById('activeFile').textContent = '';
+        document.getElementById('activeFile').style.color = '#a78bfa';
+        document.getElementById('runFileBtn').disabled = !selectedFileName?.endsWith('.hs');
+        return;
+    }
+
+    const snap = _preTemplateSnapshot;
+    _preTemplateSnapshot = null;
+    templateMode = false;
+
+    if (window.editor) window.editor.setValue(snap.content);
+    document.getElementById('validatorNameInput').value = snap.validatorName || '';
+    document.getElementById('activeFile').textContent   = snap.activeLabel || '';
+    document.getElementById('activeFile').style.color   = '#a78bfa';
+    document.getElementById('runFileBtn').disabled      = !snap.fileName?.endsWith('.hs');
+    setStatus('', '');
+}
+
+// ═══════════════════════════════════════════════════
+//  ARTIFACT DOWNLOAD  (Outcome #69788 / #69789)
+// ═══════════════════════════════════════════════════
+document.getElementById('downloadBtn').addEventListener('click', () => {
+    const url = document.getElementById('downloadBtn').dataset.url;
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href     = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+});
+
+// Reset download button on new compile
+const _origRunCode = runCode;
+// (patched inside runCode directly above)
+
+// ═══════════════════════════════════════════════════
+//  VERSION BADGE  (Outcome #69789)
+// ═══════════════════════════════════════════════════
+async function fetchAndShowVersion() {
+    try {
+        const r    = await fetch('/version');
+        const data = await r.json();
+        const badge = document.getElementById('versionBadge');
+        const ghcShort = (data.ghc || 'GHC').replace('The Glorious Glasgow Haskell Compilation System, version ', 'GHC ');
+        badge.textContent = ghcShort;
+        badge.title       = [data.ghc, data.cabal, data.nix].filter(Boolean).join('\n');
+    } catch (_) {}
+}
+
+function showVersions() {
+    const badge = document.getElementById('versionBadge');
+    notify(badge.title || 'Version info not available', 'info', 6000);
+}
+
+// ═══════════════════════════════════════════════════
+//  INIT: load templates + version on page load
+// ═══════════════════════════════════════════════════
+window.addEventListener('load', () => {
+    loadTemplates();
+    fetchAndShowVersion();
+    // Reset download btn on every new compile start
+    const origRunFileBtn = document.getElementById('runFileBtn');
+    origRunFileBtn.addEventListener('click', () => {
+        const btn = document.getElementById('downloadBtn');
+        btn.disabled    = true;
+        btn.dataset.url = '';
+    }, true);
+});
 </script>
 </body>
 </html>
