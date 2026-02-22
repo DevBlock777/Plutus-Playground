@@ -485,7 +485,10 @@ let lucidInstance = null;
 let walletAddress = null;
 
 // sessionStorage key — persists across reloads but NOT across tab-close
-const WALLET_KEY = 'plutus_wallet_name';
+const WALLET_KEY   = 'plutus_wallet_name';
+const NAV_PATH_KEY = 'plutus_sidebar_path';   // current folder
+const SEL_FILE_KEY = 'plutus_selected_file';  // selected file path
+const SEL_NAME_KEY = 'plutus_selected_name';  // selected file name
 
 // ═══════════════════════════════════════════════════
 //  MONACO INIT
@@ -598,13 +601,43 @@ require(['vs/editor/editor.main'], function () {
     // ── Auth check, then auto-reconnect wallet ──
     fetch('/auth/me')
         .then(r => { if (!r.ok) return window.location.href = '/login'; return r.json(); })
-        .then(data => {
+        .then(async data => {
             if (!data) return;
             currentUsername = data.username;
             document.getElementById('userLabel').textContent  = data.username;
             document.getElementById('userAvatar').textContent = data.username[0].toUpperCase();
-            refreshFiles();
-            tryAutoReconnect(); // ← restore wallet session after reload
+
+            // ── Restore navigation state from sessionStorage ──
+            const savedPath = sessionStorage.getItem(NAV_PATH_KEY);
+            const savedFile = sessionStorage.getItem(SEL_FILE_KEY);
+            const savedName = sessionStorage.getItem(SEL_NAME_KEY);
+
+            if (savedPath) currentSidebarPath = savedPath;
+            await refreshFiles();
+
+            // Re-open the previously selected file silently
+            if (savedFile && savedName) {
+                try {
+                    const r = await fetch(`/workspace/file?name=${encodeURIComponent(savedFile)}`);
+                    if (r.ok) {
+                        window.editor.setValue(await r.text());
+                        const ext = savedName.split('.').pop().toLowerCase();
+                        monaco.editor.setModelLanguage(window.editor.getModel(),
+                            { hs:'haskell', json:'json', md:'markdown' }[ext] || 'plaintext');
+                        selectedFilePath = savedFile;
+                        selectedFileName = savedName;
+                        document.getElementById('activeFile').textContent = '> ' + savedName;
+                        document.getElementById('runFileBtn').disabled = !savedName.endsWith('.hs');
+                        refreshFiles(); // refresh to highlight active file
+                    } else {
+                        // File no longer exists — clear stale state
+                        sessionStorage.removeItem(SEL_FILE_KEY);
+                        sessionStorage.removeItem(SEL_NAME_KEY);
+                    }
+                } catch (_) {}
+            }
+
+            tryAutoReconnect();
         })
         .catch(() => window.location.href = '/login');
 });
@@ -818,11 +851,16 @@ async function refreshFiles() {
     }
 }
 
-function sidebarNavigate(fp) { currentSidebarPath = fp; refreshFiles(); }
+function sidebarNavigate(fp) {
+    currentSidebarPath = fp;
+    sessionStorage.setItem(NAV_PATH_KEY, fp);
+    refreshFiles();
+}
 function sidebarGoBack() {
     const parts = currentSidebarPath.split('/').filter(Boolean);
     parts.pop();
     currentSidebarPath = parts.join('/');
+    sessionStorage.setItem(NAV_PATH_KEY, currentSidebarPath);
     refreshFiles();
 }
 
@@ -837,6 +875,8 @@ async function selectFile(fullPath, fileName) {
         monaco.editor.setModelMarkers(window.editor.getModel(), 'ghc', []);
         selectedFilePath = fullPath;
         selectedFileName = fileName;
+        sessionStorage.setItem(SEL_FILE_KEY, fullPath);
+        sessionStorage.setItem(SEL_NAME_KEY, fileName);
 
         // Exit template mode — file takes over
         if (templateMode) {
@@ -974,6 +1014,8 @@ async function confirmDelete() {
     if (!isDir && selectedFilePath === fullPath) {
         selectedFilePath = null;
         selectedFileName = null;
+        sessionStorage.removeItem(SEL_FILE_KEY);
+        sessionStorage.removeItem(SEL_NAME_KEY);
         if (window.editor) window.editor.setValue('-- Select or create a file in the sidebar\n');
         document.getElementById('activeFile').textContent = '';
         document.getElementById('runFileBtn').disabled = true;
@@ -981,6 +1023,7 @@ async function confirmDelete() {
     // If deleted folder was the current nav path, go back to root
     if (isDir && currentSidebarPath.startsWith(fullPath)) {
         currentSidebarPath = '';
+        sessionStorage.setItem(NAV_PATH_KEY, '');
     }
     allDirs = allDirs.filter(d => !d.startsWith(fullPath));
     await refreshFiles();
