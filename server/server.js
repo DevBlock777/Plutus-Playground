@@ -31,6 +31,10 @@ app.use(json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cors({ origin: false }));
 
+// ── Fichiers statiques frontend (CSS, JS modules) ──
+// Sert ide-styles.css, ide-core.js, ide-workspace.js, ide-compile.js, ide-terminal.js
+app.use(express.static(path.join(__dirname, '../frontend')));
+
 // ── Sessions Redis (DB 0) ──
 app.use(session({
     store: new RedisStore({ client: sessionClient }),
@@ -50,7 +54,7 @@ app.get('/', (req, res) => {
 registerRoutes(app);
 
 app.get('/ide', requireAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
 // ══════════════════════════════════════════════════════════
@@ -192,9 +196,10 @@ app.post('/workspace/create', requireAuth, (req, res) => {
 app.post('/workspace/save', requireAuth, (req, res) => {
     const { filePath, content } = req.body;
     if (!filePath) return res.status(400).send("Missing filePath");
+    if (content === undefined) return res.status(400).send("Missing content");
     const baseName = path.basename(filePath);
     const tmpPath  = path.join(TMP_DIR, `save_${uuidv4()}_${baseName}`);
-    fs.writeFileSync(tmpPath, content || '');
+    fs.writeFileSync(tmpPath, content);
     const cmd = `docker cp "${tmpPath}" plutus-runner:"${userWspace(req.session.user.id)}/${filePath}"`;
     exec(cmd, (err) => {
         if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
@@ -259,11 +264,33 @@ function analyzeValidatorType(sourceCode, validatorName) {
     const escaped = validatorName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex   = new RegExp(`^${escaped}\\s*::(.+?)(?=\\n\\S|$)`, 'ms');
     const match   = sourceCode.match(regex);
-    const result  = { isUntyped: false, returnsBool: false, returnsUnit: false, found: false };
+    const result  = { isUntyped: false, returnsBool: false, returnsUnit: false, found: false, actualValidatorName: validatorName };
 
     if (!match) {
-        console.log(`[IDE] Signature for "${validatorName}" not found — defaulting typed+Bool`);
-        result.returnsBool = true;
+        console.log(`[IDE] Signature for "${validatorName}" not found — searching for validator function`);
+        const found = findValidatorName(sourceCode);
+        if (found) {
+            console.log(`[IDE] Found validator: ${found} — re-analyzing`);
+            result.actualValidatorName = found;
+            // Re-analyze with found name
+            const foundEscaped = found.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const foundRegex   = new RegExp(`^${foundEscaped}\\s*::(.+?)(?=\\n\\S|$)`, 'ms');
+            const foundMatch   = sourceCode.match(foundRegex);
+            if (foundMatch) {
+                result.found = true;
+                const sig = foundMatch[1].replace(/\s+/g, ' ').trim();
+                console.log(`[IDE] Signature: ${found} :: ${sig}`);
+                result.isUntyped   = /(?:\w+\.)?BuiltinData\s*->\s*(?:\w+\.)?BuiltinData\s*->\s*(?:\w+\.)?BuiltinData\s*->\s*\(\)/.test(sig);
+                result.returnsBool = /->[\s]*Bool\s*$/.test(sig);
+                result.returnsUnit = /->[\s]*\(\)\s*$/.test(sig);
+            } else {
+                // If found but no sig, assume typed Bool
+                result.returnsBool = true;
+            }
+        } else {
+            console.log(`[IDE] No validator found — defaulting typed+Bool`);
+            result.returnsBool = true;
+        }
         return result;
     }
     result.found = true;
@@ -274,6 +301,32 @@ function analyzeValidatorType(sourceCode, validatorName) {
     result.returnsUnit = /->[\s]*\(\)\s*$/.test(sig);
     console.log(`[IDE] isUntyped=${result.isUntyped} returnsBool=${result.returnsBool} returnsUnit=${result.returnsUnit}`);
     return result;
+}
+
+// ══════════════════════════════════════════════════════════
+//  findValidatorName — Détecte automatiquement le nom du validateur
+// ══════════════════════════════════════════════════════════
+function findValidatorName(sourceCode) {
+    const lines = sourceCode.split('\n');
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.includes(' :: ')) {
+            const parts = trimmed.split(' :: ');
+            if (parts.length >= 2) {
+                const name = parts[0].trim();
+                const sig = parts[1].trim();
+                // Détecte les signatures de validateur typiques
+                if (name && sig && (
+                    sig.includes('-> Bool') ||  // Validateur typé retournant Bool
+                    (sig.includes('BuiltinData') && sig.includes('-> ()'))  // Validateur non typé
+                )) {
+                    console.log(`[IDE] Validateur détecté automatiquement: ${name}`);
+                    return name;
+                }
+            }
+        }
+    }
+    return null;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -336,7 +389,7 @@ function buildAugmentedSource(sourceCode, _moduleName, jobId, validatorName) {
 
 -- ══ Auto-injected (untyped validator) ══
 _ide_validatorScript :: IDE_V2.Validator
-_ide_validatorScript = IDE_V2.mkValidatorScript $$(IDE_PlutusTx.compile [|| ${validatorName} ||])
+_ide_validatorScript = IDE_V2.mkValidatorScript $$(IDE_PlutusTx.compile [|| ${analysis.actualValidatorName} ||])
 
 main :: IO ()
 main = do
@@ -351,7 +404,7 @@ main = do
 _ide_untypedValidator :: IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> ()
 _ide_untypedValidator datum redeemer ctx =
   IDE_PP.check
-    ( ${validatorName}
+    ( ${analysis.actualValidatorName}
         (IDE_PlutusTx.unsafeFromBuiltinData datum)
         (IDE_PlutusTx.unsafeFromBuiltinData redeemer)
         (IDE_PlutusTx.unsafeFromBuiltinData ctx)
@@ -372,7 +425,7 @@ main = do
 {-# INLINEABLE _ide_untypedValidator #-}
 _ide_untypedValidator :: IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> ()
 _ide_untypedValidator datum redeemer ctx =
-  ${validatorName}
+  ${analysis.actualValidatorName}
     (IDE_PlutusTx.unsafeFromBuiltinData datum)
     (IDE_PlutusTx.unsafeFromBuiltinData redeemer)
     (IDE_PlutusTx.unsafeFromBuiltinData ctx)
@@ -496,6 +549,7 @@ app.post('/run', requireAuth, async (req, res) => {
                     await recordCacheMiss();
                     sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
 
+                    if (!validatorName) validatorName = findValidatorName(sourceCode) || 'mkValidator';
                     const { source: augmented, lineOffset } = buildAugmentedSource(sourceCode, moduleName, jobId, validatorName);
                     const lectureDir = `/app/code/wspace/lecture`;
                     const tmpSrc     = path.join(TMP_DIR, `Main_${jobId}.hs`);
@@ -554,6 +608,7 @@ docker exec plutus-runner bash -lc "
     await recordCacheMiss();
     sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
 
+    if (!validatorName) validatorName = findValidatorName(code) || 'mkValidator';
     const { source: augmented, lineOffset } = buildAugmentedSource(code, moduleName, jobId, validatorName);
     const jobDir  = path.join(TMP_DIR, jobId);
     const tmpSrc  = path.join(jobDir, 'Main.hs');

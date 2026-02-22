@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Plutus Architect IDE</title>
+
+    <!-- Monaco Editor -->
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.39.0/min/vs/loader.js"></script>
+
+    <!-- Lucid (Cardano) — loaded as ES module, exposed as globals -->
+    <script type="module">
+        import { Lucid, Blockfrost } from "https://unpkg.com/lucid-cardano@0.10.11/web/mod.js";
+        window.Lucid      = Lucid;
+        window.Blockfrost = Blockfrost;
+        window._lucidReady = true;
+        window.dispatchEvent(new Event('lucid-ready'));
+    </script>
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="ide-styles.css" />
+</head>
+<body>
+
+<!-- ── Toast container ── -->
+<div id="toastContainer"></div>
+
+<!-- ── New file / folder modal ── -->
+<div id="modalOverlay" class="modal-overlay">
+    <div class="modal">
+        <h3 id="modalTitle">+ New item</h3>
+        <div class="modal-toggle">
+            <button id="toggleFile"   class="tog active" onclick="setModalType('file')">📄 File</button>
+            <button id="toggleFolder" class="tog"        onclick="setModalType('folder')">📁 Folder</button>
+        </div>
+        <div>
+            <label>Location</label>
+            <select id="modalDir"></select>
+        </div>
+        <div>
+            <label id="modalNameLabel">File name</label>
+            <input id="modalName" type="text" placeholder="ex: MyValidator.hs" />
+            <p class="modal-hint" id="modalHint">Must start with uppercase, end with .hs</p>
+        </div>
+        <div class="modal-actions">
+            <button class="cancel"  onclick="closeModal()">Cancel</button>
+            <button class="confirm" id="modalConfirmBtn" onclick="confirmCreate()">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Confirm delete modal ── -->
+<div id="deleteOverlay" class="modal-overlay">
+    <div class="modal">
+        <h3 style="color:#f87171">🗑 Delete</h3>
+        <p id="deleteMsg" style="font-size:13px;color:#9ca3af;margin:8px 0 16px;"></p>
+        <div class="modal-actions">
+            <button class="cancel"  onclick="closeDeleteModal()">Cancel</button>
+            <button class="confirm" id="deleteConfirmBtn" style="background:#7f1d1d;" onclick="confirmDelete()">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MAIN LAYOUT  (3-column grid + terminal bottom row)
+══════════════════════════════════════════════════════ -->
+<div class="layout">
+
+    <!-- ── Toolbar ── -->
+    <div class="toolbar">
+        <span class="logo-small">⬡</span>
+        <button id="connectWalletBtn" onclick="handleWalletBtn()">⬡ Connect Wallet</button>
+        <div class="sep"></div>
+        <select id="templateSelect" title="Load a template">
+            <option value="">📄 Templates…</option>
+        </select>
+        <div class="sep"></div>
+        <input id="validatorNameInput" type="text"
+               placeholder="validator name…"
+               title="Name of your validator function (BuiltinData -> BuiltinData -> BuiltinData -> ())" />
+        <button id="runFileBtn" class="run-file" disabled>▶ Compile</button>
+        <button id="downloadBtn" class="sec" disabled title="Download .plutus artifact">⬇ .plutus</button>
+        <div class="sep"></div>
+        <button id="saveBtn" class="sec">💾 Save</button>
+        <button id="newFileBtn" class="sec">＋ New</button>
+        <div class="sep"></div>
+        <span id="statusEl"></span>
+        <span id="activeFile"></span>
+        <div class="spacer"></div>
+        <span id="versionBadge" title="Toolchain versions" onclick="showVersions()">GHC…</span>
+        <div class="sep"></div>
+        <div class="user-badge">
+            <div class="user-avatar" id="userAvatar">?</div>
+            <span id="userLabel">Loading...</span>
+            <button class="logout-btn" onclick="logout()">⏻ Logout</button>
+        </div>
+    </div>
+
+    <!-- ── Sidebar ── -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            Workspace
+            <span>
+                <button class="ico-btn" onclick="openModal('file')"   title="New file">📄</button>
+                <button class="ico-btn" onclick="openModal('folder')" title="New folder">📁</button>
+                <button class="ico-btn" onclick="refreshFiles()"      title="Refresh">↻</button>
+            </span>
+        </div>
+        <div id="sidebarPath" class="sidebar-path">~</div>
+        <div id="fileList" class="file-list">
+            <div style="padding:12px;font-size:11px;color:#444;">Loading...</div>
+        </div>
+    </div>
+
+    <!-- ── Editor ── -->
+    <div class="editor-zone">
+        <div id="editor"></div>
+    </div>
+
+    <!-- ── Output panels (tabbed, right column) ── -->
+    <div class="panels-zone">
+        <div class="panels-tabs">
+            <div class="ptab active" data-tab="logs"  onclick="switchTab('logs')"><span class="tab-dot"></span>GHC</div>
+            <div class="ptab"        data-tab="std"   onclick="switchTab('std')"><span class="tab-dot"></span>Output</div>
+            <div class="ptab"        data-tab="cbor"  onclick="switchTab('cbor')"><span class="tab-dot"></span>CBOR</div>
+            <div class="ptab"        data-tab="addr"  onclick="switchTab('addr')"><span class="tab-dot"></span>Addresses</div>
+        </div>
+
+        <div class="panel-body active" id="tab-logs">
+            <div id="logs" class="panel-content comp-log copyable"
+                 onclick="copyPanel('logs')" title="Click to copy" style="position:relative;"></div>
+        </div>
+        <div class="panel-body" id="tab-std">
+            <div id="std" class="panel-content std-log copyable"
+                 onclick="copyPanel('std')" title="Click to copy" style="position:relative;"></div>
+        </div>
+        <div class="panel-body" id="tab-cbor">
+            <div id="cbor" class="panel-content cbor-log copyable"
+                 onclick="copyPanel('cbor')" title="Click to copy" style="position:relative;"></div>
+        </div>
+        <div class="panel-body" id="tab-addr">
+            <div class="addr-body">
+                <div class="addr-block">
+                    <div class="addr-label">Validator address</div>
+                    <div id="validatorAddr" class="addr-value validator empty"
+                         onclick="copyAddr('validatorAddr')" title="Click to copy">— compile to generate —</div>
+                </div>
+                <div class="addr-block">
+                    <div class="addr-label">Wallet address</div>
+                    <div id="walletAddr" class="addr-value wallet empty"
+                         onclick="copyAddr('walletAddr')" title="Connect wallet first">— wallet not connected —</div>
+                </div>
+                <div class="copy-ok" id="copyOk"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Terminal (full-width bottom row) ── -->
+    <div class="terminal-zone">
+        <div class="terminal-topbar">
+            <span class="t-title"><span class="term-dot"></span>Terminal</span>
+            <span class="t-hint">compile &lt;path.hs&gt; · compile &lt;validator&gt; &lt;path.hs&gt; · help · ↑↓ history · Tab autocomplete</span>
+            <button class="t-clear-btn" onclick="termClear()">⌫ clear</button>
+        </div>
+        <div class="terminal-output" id="termOutput"></div>
+        <div class="terminal-input-row">
+            <span class="terminal-prompt">plutus ❯</span>
+            <input id="termInput" class="terminal-input" type="text"
+                   placeholder="type 'help' for commands…"
+                   autocomplete="off" spellcheck="false" />
+        </div>
+    </div>
+
+</div><!-- /.layout -->
+
+<!-- ── JS Modules (order matters) ── -->
+<script src="ide-core.js"></script>
+<script src="ide-workspace.js"></script>
+<script src="ide-compile.js"></script>
+<script src="ide-terminal.js"></script>
+
+</body>
+</html>

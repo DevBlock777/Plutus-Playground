@@ -1,32 +1,34 @@
-# Plutus Playground Backend
+# Plutus IDE
 
 ## Description
 
-This project is the backend of the Plutus Playground, a web-based integrated development environment (IDE) for creating and testing Plutus smart contracts on the Cardano blockchain. The backend handles user authentication, session management, file system operations, compilation caching, and integration with Docker to run Plutus code.
+Plutus IDE is a web-based integrated development environment for creating, testing, and deploying Plutus smart contracts on the Cardano blockchain. It provides a user-friendly interface for writing Haskell code, compiling Plutus scripts, and interacting with Cardano wallets.
+
+The project consists of a Node.js backend handling authentication, file management, compilation, and a frontend built with vanilla JavaScript, HTML, and CSS, featuring the Monaco editor for code editing.
 
 ## Key Features
 
-- **Authentication**: User registration, login, and session management with bcrypt password hashing.
-- **File Management**: User-specific workspaces isolated via Docker containers, with support for creating, editing, and deleting files.
-- **Compilation and Execution**: Plutus code compilation using Docker, with caching of results to improve performance. Real-time output via Server-Sent Events (SSE).
-- **Wallet Integration**: Connection to Cardano wallets (Nami, Lace, Eternl) for deploying and interacting with smart contracts.
-- **Sessions and Cache**: Session storage in Redis, caching system for compilation results.
-- **Templates**: Pre-built Plutus contract templates (Vesting, NFT Marketplace) for quick start.
-- **Job Queue Management**: Concurrent build limits, queue management, and rate limiting to ensure fair resource usage.
-- **Metrics and Monitoring**: Real-time metrics on builds, cache performance, and system health.
-- **Artifact Management**: Download compiled Plutus scripts (.plutus files) and access build logs.
-- **Version Information**: Display toolchain versions (GHC, Cabal, Nix) for debugging.
+- **User Authentication**: Secure registration, login, and session management.
+- **File Management**: Isolated user workspaces with create, edit, delete operations.
+- **Code Compilation**: Real-time Plutus compilation with Docker integration, caching, and SSE for live output.
+- **Wallet Integration**: Support for Cardano wallets (Nami, Lace, Eternl) for contract deployment.
+- **Templates**: Pre-built Plutus contract templates for quick start.
+- **Terminal Interface**: Command-line style interface for compilation and status commands.
+- **Real-time Feedback**: Live compilation logs, error highlighting, and status updates.
+- **Artifact Downloads**: Download compiled .plutus files and access build logs.
+- **Version Management**: Display of toolchain versions for debugging.
+- **Responsive UI**: Clean, modern interface with sidebar navigation and panels.
 
 ## Prerequisites
 
 - Node.js (version 16 or higher)
-- Docker (to run Plutus containers)
-- Redis (for session and cache storage)
-- A Docker container named `plutus-runner` configured for Plutus compilation
+- Docker (for Plutus compilation containers)
+- Redis (for sessions and caching)
+- A configured `plutus-runner` Docker container
 
 ## Installation
 
-1. Clone this repository:
+1. Clone the repository:
    ```bash
    git clone <repository-url>
    cd backend
@@ -37,157 +39,107 @@ This project is the backend of the Plutus Playground, a web-based integrated dev
    npm install
    ```
 
-3. Ensure Docker is running and the `plutus-runner` container is available.
-
-4. Set up Redis:
-   - Install and start Redis on your system.
-   - The backend uses Redis for sessions (DB 0) and cache (DB 1).
+3. Set up Docker and Redis:
+   - Ensure Docker is running.
+   - Start Redis: `redis-server`
+   - Configure the `plutus-runner` container with Plutus toolchain.
 
 ## Configuration
 
-- **Port**: The server runs on port 3000 by default.
-- **Environment Variables**:
-  - `SESSION_SECRET`: Secret key for sessions (change it in production).
-  - `REDIS_URL`: Redis connection URL (default `redis://localhost:6379`).
-  - `MAX_CONCURRENT_BUILDS`: Maximum concurrent compilation jobs (default: 3).
-  - `MAX_QUEUE_SIZE`: Maximum queued jobs (default: 20).
-  - `JOB_TIMEOUT_MS`: Compilation timeout in milliseconds (default: 300000 = 5 minutes).
-  - `MAX_OUTPUT_MB`: Maximum compilation output size in MB (default: 10).
-  - `RATE_LIMIT_MAX`: Maximum builds per user per minute (default: 10).
-- **Docker**: The `plutus-runner` container must be configured to mount user workspaces.
+Environment variables (in a `.env` file or system):
+- `SESSION_SECRET`: Secret for session encryption
+- `REDIS_URL`: Redis connection URL (default: `redis://localhost:6379`)
+- `MAX_CONCURRENT_BUILDS`: Max concurrent jobs (default: 3)
+- `JOB_TIMEOUT_MS`: Timeout for compilations (default: 300000ms)
+- `RATE_LIMIT_MAX`: Builds per user per minute (default: 10)
 
 ## Running
 
-Start the server:
+Start the development server:
 ```bash
 npm run dev
 ```
 
-The server will be available at `http://localhost:3000`.
+Access the IDE at `http://localhost:3000`.
+
+## Project Structure
+
+```
+backend/
+├── server/
+│   ├── auth.js          # Authentication and user management
+│   ├── cache.js         # Compilation caching
+│   ├── jobQueue.js      # Build queue and rate limiting
+│   ├── redis.js         # Redis utilities
+│   ├── server.js        # Main Express server
+│   ├── templates.js     # Plutus contract templates
+│   └── utils.js         # Helper functions
+├── frontend/
+│   ├── index.html       # Main IDE page
+│   ├── login.html       # Login page
+│   ├── ide-core.js      # Core IDE functionality
+│   ├── ide-compile.js   # Compilation handling
+│   ├── ide-styles.css   # CSS styles
+│   ├── ide-terminal.js  # Terminal interface
+│   └── ide-workspace.js # File and workspace management
+├── sessions/            # Session storage
+├── tmp/                 # Temporary files
+├── workspaces/          # User workspaces
+├── package.json
+├── README.md
+└── README_FR.md
+```
 
 ## API Endpoints
 
 ### Authentication
-- `POST /auth/register` - User registration
+- `POST /auth/register` - Register new user
 - `POST /auth/login` - User login
-- `POST /auth/logout` - User logout
-- `GET /auth/me` - Get current user info
+- `POST /auth/logout` - Logout
+- `GET /auth/me` - Current user info
 
 ### Workspace
-- `GET /workspace/files` - List files in workspace
+- `GET /workspace/files` - List workspace files
 - `GET /workspace/file` - Get file content
-- `POST /workspace/create` - Create new file
-- `POST /workspace/save` - Save file content
+- `POST /workspace/create` - Create file
+- `POST /workspace/save` - Save file
+- `POST /workspace/mkdir` - Create directory
+- `DELETE /workspace/delete` - Delete file/directory
 
 ### Compilation
-- `POST /run` - Compile Plutus code (supports both file and editor mode)
+- `POST /run` - Compile Plutus code
 
 ### Templates
-- `GET /templates` - List available templates
-- `GET /templates/:id` - Get template source code
+- `GET /templates` - List templates
+- `GET /templates/:id` - Get template
 
-### Monitoring
+### Other
 - `GET /health` - Health check
 - `GET /version` - Toolchain versions
-- `GET /admin/metrics` - System metrics (requires authentication)
-
-### Artifacts
-- `GET /job/:jobId/log` - Get compilation logs
-- `GET /job/:jobId/artifact` - Get artifact metadata
-- `GET /job/:jobId/download` - Download compiled .plutus file
-
-## Architecture
-
-The backend consists of several key components:
-
-- **Server** (`server.js`): Main Express.js server handling HTTP requests and WebSocket connections.
-- **Authentication** (`auth.js`): User management and session handling.
-- **Cache** (`cache.js`): Compilation result caching using Redis.
-- **Job Queue** (`jobQueue.js`): Build orchestration, rate limiting, and metrics.
-- **Templates** (`templates.js`): Pre-defined Plutus contract templates.
-- **Redis** (`redis.js`): Redis client configuration and utilities.
-- **Utils** (`utils.js`): Helper functions for code analysis and processing.
-
-## Development
-
-### Adding New Templates
-
-Templates are defined in `templates.js`. Each template should include:
-- `name`: Display name
-- `description`: Brief description
-- `validatorFn`: Main validator function name
-- `source`: Complete Haskell source code
-
-### Monitoring and Metrics
-
-Access metrics at `/admin/metrics` to view:
-- Job statistics (total, success rate, cache hit rate)
-- Queue status (active jobs, waiting jobs)
-- System limits and configuration
-
-### Logs and Debugging
-
-- Compilation logs are retained for 24 hours per job ID
-- Use `/job/:jobId/log` to retrieve logs for debugging
-- Version information helps identify toolchain issues
-
-1. Start Redis if not already running:
-   ```bash
-   redis-server
-   ```
-
-2. Start the server:
-   ```bash
-   node server.js
-   ```
-
-3. Open your browser to `http://localhost:3000`.
+- `GET /job/:id/log` - Compilation logs
+- `GET /job/:id/download` - Download artifacts
 
 ## Usage
 
-- Access the login page to register or log in.
-- Once authenticated, access the IDE to create and edit Haskell/Plutus files.
-- Use the API endpoints to manage files, compile, and run code.
+1. Register or log in.
+2. Create/edit Haskell files in the sidebar.
+3. Use templates for quick start.
+4. Compile via button or terminal commands.
+5. Connect wallet for deployment.
+6. Download compiled scripts.
 
-## Project Structure
+## Development
 
-- `server.js`: Main Express server.
-- `auth.js`: Authentication module.
-- `cache.js`: Caching system.
-- `redis.js`: Redis connection.
-- `utils.js`: Utility functions.
-- `assets/`: Static assets (CSS, JS, images).
-- `sessions/`: Persistent session storage.
-- `tmp/`: Temporary files.
-- `workspaces/`: User workspaces with Haskell files.
+- Add templates in `server/templates.js`
+- Modify UI in `frontend/` files
+- Backend logic in `server/` files
 
-## API Endpoints
+## Security
 
-### Public Routes
-- `GET /`: Redirects to login or IDE based on session.
-- `GET /login`: Login page.
-- `GET /register`: Registration page.
-- `POST /auth/register`: User registration.
-- `POST /auth/login`: User login.
-
-### Protected Routes (authentication required)
-- `GET /ide`: Main IDE interface.
-- `GET /workspace/files`: List files in user workspace.
-- `POST /workspace/files`: Create/update files.
-- `DELETE /workspace/files`: Delete files.
-- `POST /compile`: Compile Plutus code.
-- `POST /run`: Execute compiled code.
-
-## Security Considerations
-
-- Passwords are hashed with bcrypt.
-- Sessions are HTTP-only and secure in production.
-- User workspaces are isolated in Docker containers.
-- CORS is disabled for server-side rendering.
-
-## Contributing
-
-Contributions are welcome. Please follow coding best practices and add tests for new features.
+- Bcrypt password hashing
+- Secure sessions
+- Docker isolation for user code
+- Rate limiting and queue management
 
 ## License
 
