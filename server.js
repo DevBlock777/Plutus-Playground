@@ -33,8 +33,8 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        secure:   false,   // set true behind HTTPS
-        maxAge:   7 * 24 * 60 * 60 * 1000   // 7 days
+        secure:   false,
+        maxAge:   7 * 24 * 60 * 60 * 1000
     }
 }));
 
@@ -44,10 +44,8 @@ app.get('/', (req, res) => {
     res.redirect('/login');
 });
 
-// ── Auth routes (login, register pages + POST handlers) ──
 registerRoutes(app);
 
-// ── Page IDE (protégée) ──
 app.get('/ide', requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -64,7 +62,6 @@ function endSSE(res) {
     res.end();
 }
 
-// Dossier Docker isolé par user
 function userWspace(userId) {
     return `/app/code/wspace/users/${userId}`;
 }
@@ -73,10 +70,9 @@ function ensureUserDir(userId, cb) {
 }
 
 // ══════════════════════════════════════════
-//  WORKSPACE (toutes routes protégées SSR)
+//  WORKSPACE
 // ══════════════════════════════════════════
 
-// Lister un dossier
 app.get('/workspace/files', requireAuth, (req, res) => {
     const subPath = req.query.path || "";
     const base = userWspace(req.session.user.id);
@@ -99,7 +95,6 @@ app.get('/workspace/files', requireAuth, (req, res) => {
     });
 });
 
-// Lire un fichier
 app.get('/workspace/file', requireAuth, (req, res) => {
     const filePath = req.query.name;
     if (!filePath) return res.status(400).send("Missing 'name' parameter");
@@ -110,7 +105,6 @@ app.get('/workspace/file', requireAuth, (req, res) => {
     });
 });
 
-// Créer un fichier
 app.post('/workspace/create', requireAuth, (req, res) => {
     const { filePath, content } = req.body;
     if (!filePath) return res.status(400).send("Missing filePath");
@@ -128,7 +122,6 @@ app.post('/workspace/create', requireAuth, (req, res) => {
     });
 });
 
-// Sauvegarder un fichier
 app.post('/workspace/save', requireAuth, (req, res) => {
     const { filePath, content } = req.body;
     if (!filePath) return res.status(400).send("Missing filePath");
@@ -145,6 +138,233 @@ app.post('/workspace/save', requireAuth, (req, res) => {
     });
 });
 
+// ══════════════════════════════════════════════════════════
+//  adjustGHCOutput — Corrige les numéros de ligne GHC
+// ══════════════════════════════════════════════════════════
+//
+//  GHC output :
+//    lecture/Main.hs:93:7: error:     →  Testt.hs:86:7: error:
+//       |                                   |
+//    93 | {-# INLINEABLE ammValidator  →  86 | {-# INLINEABLE ammValidator
+//       |                                   |
+//
+function adjustGHCOutput(text, offset, displayFile) {
+    if (!offset || offset <= 0) return text;
+
+    let result = text;
+
+    // 1. Remplacer le nom de fichier pour la lisibilité
+    if (displayFile) {
+        result = result.replace(/lecture\/Main\.hs/g, displayFile);
+    }
+
+    // 2. Ajuster les références "file.hs:LINE:COL:"
+    result = result.replace(
+        /(\S+\.hs:)(\d+)(:\d+:)/g,
+        (_match, prefix, lineStr, suffix) => {
+            const adjusted = Math.max(1, parseInt(lineStr) - offset);
+            return `${prefix}${adjusted}${suffix}`;
+        }
+    );
+
+    // 3. Ajuster le contexte source GHC : "  93 | code here"
+    result = result.replace(
+        /^(\s*)(\d+)(\s*\|)/gm,
+        (_match, prefix, lineStr, suffix) => {
+            const adjusted = Math.max(1, parseInt(lineStr) - offset);
+            return `${prefix}${String(adjusted).padStart(lineStr.length)}${suffix}`;
+        }
+    );
+
+    return result;
+}
+
+// ══════════════════════════════════════════════════════════
+//  analyzeValidatorType — Détecte la signature du validateur
+// ══════════════════════════════════════════════════════════
+function analyzeValidatorType(sourceCode, validatorName) {
+    const escaped = validatorName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`^${escaped}\\s*::(.+?)(?=\\n\\S|$)`, 'ms');
+    const match = sourceCode.match(regex);
+
+    const result = {
+        isUntyped:   false,
+        returnsBool: false,
+        returnsUnit: false,
+        found:       false
+    };
+
+    if (!match) {
+        console.log(`[IDE] Type signature for "${validatorName}" not found — defaulting to typed+Bool`);
+        result.returnsBool = true;
+        return result;
+    }
+
+    result.found = true;
+    const sig = match[1].replace(/\s+/g, ' ').trim();
+    console.log(`[IDE] Parsed type signature: ${validatorName} :: ${sig}`);
+
+    result.isUntyped = /(?:\w+\.)?BuiltinData\s*->\s*(?:\w+\.)?BuiltinData\s*->\s*(?:\w+\.)?BuiltinData\s*->\s*\(\)/.test(sig);
+    result.returnsBool = /->[\s]*Bool\s*$/.test(sig);
+    result.returnsUnit = /->[\s]*\(\)\s*$/.test(sig);
+
+    console.log(`[IDE] Analysis: isUntyped=${result.isUntyped} returnsBool=${result.returnsBool} returnsUnit=${result.returnsUnit}`);
+    return result;
+}
+
+// ══════════════════════════════════════════════════════════
+//  buildAugmentedSource — Fusionne le code user en Main.hs
+//
+//  Retourne { source: string, lineOffset: number }
+//  lineOffset = nombre de lignes injectées AVANT le code user
+// ══════════════════════════════════════════════════════════
+function buildAugmentedSource(sourceCode, _moduleName, jobId, validatorName) {
+    let src = sourceCode;
+    let linesAddedBefore = 0;
+
+    // ─── 0. Analyse du type ──────────────────────────
+    const analysis = analyzeValidatorType(src, validatorName);
+
+    // ─── 1. Pragmas requis ───────────────────────────
+    const requiredPragmas = ['TemplateHaskell', 'DataKinds', 'NoImplicitPrelude'];
+    const missing = requiredPragmas.filter(p => !src.includes(p));
+    if (missing.length > 0) {
+        const pragmaBlock = missing.map(p => `{-# LANGUAGE ${p} #-}`).join('\n');
+        src = pragmaBlock + '\n' + src;
+        linesAddedBefore += missing.length;
+    }
+
+    // ─── 2. Renommer module → Main ───────────────────
+    const hadModule = /^module\s+/m.test(sourceCode);
+    if (hadModule) {
+        src = src.replace(
+            /^module\s+\S+(\s*\([^)]*\))?\s+where/m,
+            'module Main where'
+        );
+        // Remplacement in-place → pas de lignes ajoutées
+    } else {
+        const lines = src.split('\n');
+        let idx = 0;
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim().startsWith('{-#') || lines[i].trim() === '') {
+                idx = i + 1;
+            } else break;
+        }
+        lines.splice(idx, 0, 'module Main where');
+        src = lines.join('\n');
+        linesAddedBefore += 1;
+    }
+
+    // ─── 3. IDE imports (qualifiés, aliases uniques) ─
+    const ideImportLines = [
+        '',
+        '-- ── IDE auto-imports (do not edit) ──',
+        'import qualified PlutusTx              as IDE_PlutusTx',
+        'import qualified PlutusTx.Prelude      as IDE_PP',
+        'import qualified Plutus.V2.Ledger.Api  as IDE_V2',
+        'import           Utilities             (writeValidatorToFile)',
+        'import           Prelude               (IO, putStrLn)',
+        '-- ──────────────────────────────────────',
+        ''
+    ];
+    const ideImportsText = ideImportLines.join('\n');
+
+    // Insérer après "module Main where"
+    // Le \n avant + les lignes du bloc
+    const insertedText = '\n' + ideImportsText;
+    const insertedNewlines = (insertedText.match(/\n/g) || []).length;
+    linesAddedBefore += insertedNewlines;
+
+    src = src.replace(
+        /(module\s+Main\s+where)/,
+        '$1' + insertedText
+    );
+
+    // ─── 4. Supprimer un éventuel main existant ─────
+    //    (remplacement in-place, pas de changement de ligne)
+    src = src.replace(/^main\s*::\s*IO\s*\(\)\s*$/gm, '-- [IDE removed] main :: IO ()');
+    src = src.replace(/^main\s*=\s*.+$/gm,            '-- [IDE removed] main = …');
+
+    // ─── 5. Bloc injecté (fin du fichier) ────────────
+    //    N'affecte pas l'offset (ajouté APRÈS le code user)
+    let block;
+
+    if (analysis.isUntyped) {
+        // CAS A : BuiltinData -> BuiltinData -> BuiltinData -> ()
+        // → Compilation directe, pas de wrapper
+        block = `
+
+-- ══ Auto-injected by Plutus IDE (untyped validator) ══
+
+_ide_validatorScript :: IDE_V2.Validator
+_ide_validatorScript = IDE_V2.mkValidatorScript $$(IDE_PlutusTx.compile [|| ${validatorName} ||])
+
+main :: IO ()
+main = do
+  writeValidatorToFile "./assets/${jobId}output.plutus" _ide_validatorScript
+  putStrLn "Validator CBOR written successfully."
+-- ══ End ══
+`;
+
+    } else if (analysis.returnsBool) {
+        // CAS B : … -> Bool
+        // → Wrapper + unsafeFromBuiltinData + check
+        block = `
+
+-- ══ Auto-injected by Plutus IDE (typed validator -> Bool) ══
+
+{-# INLINEABLE _ide_untypedValidator #-}
+_ide_untypedValidator :: IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> ()
+_ide_untypedValidator datum redeemer ctx =
+  IDE_PP.check
+    ( ${validatorName}
+        (IDE_PlutusTx.unsafeFromBuiltinData datum)
+        (IDE_PlutusTx.unsafeFromBuiltinData redeemer)
+        (IDE_PlutusTx.unsafeFromBuiltinData ctx)
+    )
+
+_ide_validatorScript :: IDE_V2.Validator
+_ide_validatorScript = IDE_V2.mkValidatorScript $$(IDE_PlutusTx.compile [|| _ide_untypedValidator ||])
+
+main :: IO ()
+main = do
+  writeValidatorToFile "./assets/${jobId}output.plutus" _ide_validatorScript
+  putStrLn "Validator CBOR written successfully."
+-- ══ End ══
+`;
+
+    } else {
+        // CAS C : Types custom -> ()
+        // → Wrapper + unsafeFromBuiltinData, SANS check
+        block = `
+
+-- ══ Auto-injected by Plutus IDE (typed validator -> ()) ══
+
+{-# INLINEABLE _ide_untypedValidator #-}
+_ide_untypedValidator :: IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> IDE_PlutusTx.BuiltinData -> ()
+_ide_untypedValidator datum redeemer ctx =
+  ${validatorName}
+    (IDE_PlutusTx.unsafeFromBuiltinData datum)
+    (IDE_PlutusTx.unsafeFromBuiltinData redeemer)
+    (IDE_PlutusTx.unsafeFromBuiltinData ctx)
+
+_ide_validatorScript :: IDE_V2.Validator
+_ide_validatorScript = IDE_V2.mkValidatorScript $$(IDE_PlutusTx.compile [|| _ide_untypedValidator ||])
+
+main :: IO ()
+main = do
+  writeValidatorToFile "./assets/${jobId}output.plutus" _ide_validatorScript
+  putStrLn "Validator CBOR written successfully."
+-- ══ End ══
+`;
+    }
+
+    src += block;
+
+    console.log(`[IDE] lineOffset = ${linesAddedBefore} (${missing.length} pragmas + ${hadModule ? 0 : 1} module + ${insertedNewlines} imports)`);
+    return { source: src, lineOffset: linesAddedBefore };
+}
+
 // ══════════════════════════════════════════
 //  COMPILATION
 // ══════════════════════════════════════════
@@ -159,10 +379,19 @@ app.post('/run', requireAuth, async (req, res) => {
     const userId = req.session.user.id;
     const userDir = userWspace(userId);
 
-    // MODE FICHIER
+    // ── Helper SSE avec ajustement des lignes ──
+    function sendCompilation(res, text, lineOffset, displayFile) {
+        const adjusted = adjustGHCOutput(text, lineOffset, displayFile);
+        sendSSE(res, adjusted, 'compilation');
+    }
+
+    // ────────────────────────────
+    //  MODE FICHIER
+    // ────────────────────────────
     if (fileName) {
         const moduleName = path.basename(fileName).replace('.hs', '');
         const sourceFile = `${userDir}/${fileName}`;
+        const displayFile = path.basename(fileName);
 
         sendSSE(res, `> Compiling ${moduleName}...\n`, 'compilation');
 
@@ -172,15 +401,14 @@ app.post('/run', requireAuth, async (req, res) => {
                 return endSSE(res);
             }
 
-            // Read source from Docker
-            exec(`docker exec plutus-runner cat "${sourceFile}"`, (err2, sourceCode) => {
+            exec(`docker exec plutus-runner cat "${sourceFile}"`, { maxBuffer: 1024 * 1024 * 10 }, (err2, sourceCode) => {
                 if (err2) {
                     sendSSE(res, `> ERROR: Could not read source file.\n`, 'compilation');
                     return endSSE(res);
                 }
 
                 (async () => {
-                    // Check cache on original source (before injection)
+                    // Cache check
                     const hash  = hashSource(sourceCode);
                     const entry = await getCache(hash);
                     if (entry) {
@@ -194,10 +422,15 @@ app.post('/run', requireAuth, async (req, res) => {
 
                     sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
 
-                    const augmented  = buildAugmentedSource(sourceCode, moduleName, jobId, validatorName);
+                    const { source: augmented, lineOffset } = buildAugmentedSource(
+                        sourceCode, moduleName, jobId, validatorName
+                    );
+
                     const lectureDir = `/app/code/wspace/lecture`;
-                    const tmpSrc     = path.join(TMP_DIR, `${moduleName}_${jobId}.hs`);
+                    const tmpSrc     = path.join(TMP_DIR, `Main_${jobId}.hs`);
                     fs.writeFileSync(tmpSrc, augmented);
+
+                    console.log(`[IDE] Generated Main.hs (offset=${lineOffset}) for ${displayFile}`);
 
                     const dockerCmd = `docker cp "${tmpSrc}" plutus-runner:${lectureDir}/Main.hs && \
 docker exec plutus-runner bash -lc "
@@ -206,11 +439,21 @@ docker exec plutus-runner bash -lc "
   nix develop . --command cabal run alw-exe 2>&1
 "`;
                     const child = exec(dockerCmd, { maxBuffer: 1024 * 1024 * 50 });
-                    child.stdout.on('data', (d) => sendSSE(res, d, d.includes('written successfully') ? 'stdout' : 'compilation'));
-                    child.stderr.on('data', (d) => sendSSE(res, d, 'compilation'));
-                    child.on('close', (code) => {
+
+                    child.stdout.on('data', (d) => {
+                        if (d.includes('written successfully')) {
+                            sendSSE(res, d, 'stdout');
+                        } else {
+                            sendCompilation(res, d, lineOffset, displayFile);
+                        }
+                    });
+                    child.stderr.on('data', (d) => {
+                        sendCompilation(res, d, lineOffset, displayFile);
+                    });
+
+                    child.on('close', (exitCode) => {
                         if (fs.existsSync(tmpSrc)) fs.unlinkSync(tmpSrc);
-                        handleClose(res, code, jobId, hash);
+                        handleClose(res, exitCode, jobId, hash);
                     });
                     req.on('close', () => child.kill());
                 })();
@@ -219,15 +462,18 @@ docker exec plutus-runner bash -lc "
         return;
     }
 
-    // MODE ÉDITEUR
+    // ────────────────────────────
+    //  MODE ÉDITEUR
+    // ────────────────────────────
     if (!code) {
         sendSSE(res, 'Error: No code provided.\n', 'compilation');
         return endSSE(res);
     }
 
-    const moduleName = extractModuleName(code);
+    const moduleName  = extractModuleName(code);
+    const displayFile = `${moduleName}.hs`;
 
-    // ── Check cache first ──
+    // Cache check
     const hash  = hashSource(code);
     const entry = await getCache(hash);
 
@@ -242,11 +488,16 @@ docker exec plutus-runner bash -lc "
 
     sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
 
-    const augmented = buildAugmentedSource(code, moduleName, jobId, validatorName);
-    const jobDir    = path.join(TMP_DIR, jobId);
+    const { source: augmented, lineOffset } = buildAugmentedSource(
+        code, moduleName, jobId, validatorName
+    );
+
+    const jobDir = path.join(TMP_DIR, jobId);
     fs.mkdirSync(jobDir, { recursive: true });
-    // Write augmented source as Main.hs (module is now "module Main")
     fs.writeFileSync(path.join(jobDir, 'Main.hs'), augmented);
+
+    console.log(`[IDE] Generated Main.hs (offset=${lineOffset}) for editor mode`);
+
     sendSSE(res, `[${jobId}] Initializing...\n`, 'compilation');
 
     const dockerCmd = `
@@ -258,64 +509,28 @@ docker exec plutus-runner bash -lc "
 "`;
 
     const child = exec(dockerCmd, { maxBuffer: 1024 * 1024 * 10 });
-    child.stdout.on('data', (d) => sendSSE(res, d, d.includes('Validator CBOR written') ? 'stdout' : 'compilation'));
-    child.stderr.on('data', (d) => sendSSE(res, d, 'compilation'));
+
+    child.stdout.on('data', (d) => {
+        if (d.includes('Validator CBOR written')) {
+            sendSSE(res, d, 'stdout');
+        } else {
+            sendCompilation(res, d, lineOffset, displayFile);
+        }
+    });
+    child.stderr.on('data', (d) => {
+        sendCompilation(res, d, lineOffset, displayFile);
+    });
+
     child.on('close', (exitCode) => {
         try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch (e) {}
         handleClose(res, exitCode, jobId, hash);
     });
-    child.on('error', (err) => { sendSSE(res, `Fatal Error: ${err.message}\n`, 'compilation'); endSSE(res); });
+    child.on('error', (err) => {
+        sendSSE(res, `Fatal Error: ${err.message}\n`, 'compilation');
+        endSSE(res);
+    });
     req.on('close', () => child.kill());
 });
-
-/**
- * Appends the CBOR generation block to the user's source file.
- * validatorName replaces "mValidator" — it's the function the user defined
- * that has type  BuiltinData -> BuiltinData -> BuiltinData -> ()
- *
- * The injected block mirrors exactly what was manually added before:
- *
- *   {-# INLINEABLE untypedValidator #-}
- *   untypedValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()
- *   untypedValidator d r c = P.check (mValidator (from d) (from r) (from c))
- *
- *   validatorScript :: PlutusV2.Validator
- *   validatorScript = PlutusV2.mkValidatorScript $$(PlutusTx.compile [||untypedValidator||])
- *
- *   getCbor :: IO ()
- *   getCbor = writeValidatorToFile "./assets/xxx.plutus" validatorScript
- *   main = getCbor
- */
-function buildAugmentedSource(sourceCode, moduleName, jobId, validatorName) {
-    // Rename module to Main so cabal can run it as an executable
-    const withMain = sourceCode.replace(/^module\s+\S+/m, 'module Main');
-
-    const block = `
-
--- ── Auto-injected by Plutus IDE ──────────────────
-{-# INLINEABLE _ide_untypedValidator #-}
-_ide_untypedValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()
-_ide_untypedValidator mDatum mRedeemer ctx =
-  P.check
-    ( ${validatorName}
-        (PlutusTx.unsafeFromBuiltinData mDatum)
-        (PlutusTx.unsafeFromBuiltinData mRedeemer)
-        (PlutusTx.unsafeFromBuiltinData ctx)
-    )
-
-_ide_validatorScript :: PlutusV2.Validator
-_ide_validatorScript = PlutusV2.mkValidatorScript $$(PlutusTx.compile [||_ide_untypedValidator||])
-
-getCbor :: IO ()
-getCbor = writeValidatorToFile "./assets/${jobId}output.plutus" _ide_validatorScript
-
-main :: IO ()
-main = getCbor
--- ── End auto-injected block ──────────────────────
-`;
-
-    return withMain + block;
-}
 
 function handleClose(res, exitCode, jobId, sourceHash = null) {
     if (exitCode === null || exitCode === 0) {
@@ -333,7 +548,7 @@ function handleClose(res, exitCode, jobId, sourceHash = null) {
                         await setCache(sourceHash, cborHex);
                         const stats = await cacheStats();
                         sendSSE(res, `> Result saved to cache (${stats.entries} entries, TTL ${stats.ttlDays}d).\n`, 'stdout');
-                        console.log(`[cache] Saved ${sourceHash.slice(0, 8)}… — ${stats.entries} entries in Redis`);
+                        console.log(`[cache] Saved ${sourceHash.slice(0, 8)}… — ${stats.entries} entries`);
                     }
                 } catch (e) {
                     const raw = stdout.trim();
@@ -352,7 +567,7 @@ function handleClose(res, exitCode, jobId, sourceHash = null) {
     }
 }
 
-// ── Bootstrap: connect Redis then start HTTP server ──
+// ── Bootstrap ──
 connectRedis()
     .then(() => {
         app.listen(PORT, () => {

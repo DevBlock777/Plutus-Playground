@@ -814,7 +814,7 @@ async function confirmCreate() {
 
     const mod  = name.replace('.hs', '');
     const fp   = dir ? `${dir}/${name}` : name;
-    const content = `module ${mod} where\n\nimport PlutusTx qualified\nimport PlutusTx.Prelude\nimport PlutusLedgerApi.V2\n\n{-# INLINABLE mkValidator #-}\nmkValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()\nmkValidator _ _ _ = ()\n\nvalidatorScript :: Validator\nvalidatorScript = mkValidatorScript\n    $$(PlutusTx.compile [|| mkValidator ||])\n`;
+    const content = `module ${mod} where\n\nimport PlutusTx \nimport PlutusTx.Prelude\nimport Plutus.V2.Ledger.Api\n\n{-# INLINABLE mkValidator #-}\nmkValidator :: BuiltinData -> BuiltinData -> BuiltinData -> ()\nmkValidator _ _ _ = ()\n`;
 
     const r = await fetch('/workspace/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
