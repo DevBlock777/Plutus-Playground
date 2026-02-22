@@ -5,7 +5,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 import session from 'express-session';
-import { createClient } from 'redis';
 import { TEMPLATES } from './templates.js';
 import { RedisStore } from 'connect-redis';
 import { v4 as uuidv4 } from 'uuid';
@@ -201,6 +200,36 @@ app.post('/workspace/save', requireAuth, (req, res) => {
         if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
         if (err) return res.status(500).send(err.message);
         res.send("Saved");
+    });
+});
+
+// Créer un dossier
+app.post('/workspace/mkdir', requireAuth, (req, res) => {
+    const { dirPath } = req.body;
+    if (!dirPath) return res.status(400).send("Missing dirPath");
+    // Sanitize: no traversal, no absolute paths
+    if (dirPath.includes('..') || dirPath.startsWith('/'))
+        return res.status(400).send("Invalid path");
+    const fullPath = `${userWspace(req.session.user.id)}/${dirPath}`;
+    exec(`docker exec plutus-runner mkdir -p "${fullPath}"`, (err) => {
+        if (err) return res.status(500).send(err.message);
+        res.send("Directory created");
+    });
+});
+
+// Supprimer un fichier ou dossier
+app.delete('/workspace/delete', requireAuth, (req, res) => {
+    const { itemPath, isDirectory } = req.body;
+    if (!itemPath) return res.status(400).send("Missing itemPath");
+    if (itemPath.includes('..') || itemPath.startsWith('/'))
+        return res.status(400).send("Invalid path");
+    const fullPath = `${userWspace(req.session.user.id)}/${itemPath}`;
+    const cmd = isDirectory
+        ? `docker exec plutus-runner rm -rf "${fullPath}"`
+        : `docker exec plutus-runner rm -f "${fullPath}"`;
+    exec(cmd, (err) => {
+        if (err) return res.status(500).send(err.message);
+        res.send("Deleted");
     });
 });
 

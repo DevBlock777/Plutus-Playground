@@ -116,11 +116,11 @@
         <div id="loginForm" class="form active">
             <div id="loginMsg" class="msg"></div>
             <div class="field">
-                <label>Identifiant</label>
-                <input id="loginUser" type="text" placeholder="votre_username" autocomplete="username" />
+                <label>Username</label>
+                <input id="loginUser" type="text" placeholder="username" autocomplete="username" />
             </div>
             <div class="field">
-                <label>Mot de passe</label>
+                <label>Password</label>
                 <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" />
             </div>
             <button class="btn" id="loginBtn" onclick="login()">→ Connexion</button>
@@ -130,21 +130,21 @@
         <div id="registerForm" class="form">
             <div id="registerMsg" class="msg"></div>
             <div class="field">
-                <label>Identifiant</label>
+                <label>Username</label>
                 <input id="regUser" type="text" placeholder="votre_username" autocomplete="username" />
             </div>
             <div class="field">
-                <label>Mot de passe</label>
+                <label>Password</label>
                 <input id="regPass" type="password" placeholder="Min. 6 caractères" autocomplete="new-password" />
             </div>
             <div class="field">
-                <label>Confirmer</label>
+                <label>Confirm</label>
                 <input id="regPass2" type="password" placeholder="Répétez le mot de passe" autocomplete="new-password" />
             </div>
             <button class="btn" id="registerBtn" onclick="register()">→ Créer un compte</button>
         </div>
     </div>
-    <div class="footer-note">Session sécurisée · Cookie httpOnly</div>
+    <div class="footer-note" id="footerNote"></div>
 </div>
 
 <script>
@@ -219,6 +219,9 @@
         if (document.getElementById('loginForm').classList.contains('active')) login();
         else register();
     });
+
+    // Set dynamic year in footer
+    document.getElementById('footerNote').textContent = `© ${new Date().getFullYear()} Plutus IDE`;
 </script>
 </body>
 </html>
