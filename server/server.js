@@ -9,16 +9,17 @@ import { TEMPLATES } from './templates.js';
 import { RedisStore } from 'connect-redis';
 import { v4 as uuidv4 } from 'uuid';
 import { extractModuleName } from './utils.js';
-import { registerRoutes, requireAuth } from './auth.js';
+import { registerRoutes, requireAuth } from './auth/auth.js';
 import { hashSource, getCache, setCache, cacheStats } from './cache.js';
-import { connectRedis, sessionClient } from './redis.js';
+import { connectRedis, sessionClient } from './config/db.js';
 import {
     acquireSlot, checkRateLimit, getMetrics,
     recordJobStart, recordJobSuccess, recordJobFailure,
     recordCacheHit, recordCacheMiss,
     appendJobLog, getJobLog, storeJobArtifact, getJobArtifact,
-    JOB_TIMEOUT_MS, MAX_OUTPUT_MB, RATE_LIMIT_MAX,
+    
 } from './jobQueue.js';
+import {JOB_TIMEOUT_MS, MAX_OUTPUT_MB, RATE_LIMIT_MAX,} from "./constants.js"
 
 const app = express();
 const PORT = 3000;
@@ -117,6 +118,29 @@ app.get('/job/:jobId/download', requireAuth, async (req, res) => {
     if (!artifact) return res.status(404).json({ error: 'Artifact not found or expired (24h TTL)' });
     const name = (artifact.fileName || req.params.jobId).replace('.hs', '.plutus');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.send(JSON.stringify({
+        type:        'PlutusScriptV2',
+        description: artifact.fileName || '',
+        cborHex:     artifact.cborHex,
+    }, null, 2));
+});
+
+// ── Liste des fichiers générés par un job (quand main() écrit plusieurs fichiers) ──
+app.get('/job/:jobId/files', requireAuth, async (req, res) => {
+    const artifact = await getJobArtifact(req.params.jobId);
+    if (!artifact) return res.status(404).json({ error: 'Job not found or expired' });
+    // Si le job a plusieurs fichiers, ils sont listés dans artifact.files
+    const files = artifact.files || [{ name: (artifact.fileName || 'output.plutus').replace('.hs', '.plutus') }];
+    res.json({ jobId: req.params.jobId, files });
+});
+
+// ── Téléchargement d'un fichier spécifique d'un job multi-output ──
+app.get('/job/:jobId/file/:name', requireAuth, async (req, res) => {
+    const key      = `${req.params.jobId}_${req.params.name}`;
+    const artifact = await getJobArtifact(key);
+    if (!artifact) return res.status(404).json({ error: 'File not found or expired' });
+    res.setHeader('Content-Disposition', `attachment; filename="${artifact.fileName}"`);
     res.setHeader('Content-Type', 'application/json');
     res.send(JSON.stringify({
         type:        'PlutusScriptV2',
@@ -361,7 +385,9 @@ function buildAugmentedSource(sourceCode, _moduleName, jobId, validatorName) {
         src = lines.join('\n');
         linesAddedBefore += 1;
     }
-
+    let containMain = true
+    if(!src.includes("main ::")){
+     containMain = false
     // 3. IDE imports
     const ideImportLines = [
         '',
@@ -442,7 +468,8 @@ main = do
 
     src += block;
     console.log(`[IDE] lineOffset=${linesAddedBefore} (${missing.length} pragmas, ${hadModule ? 0 : 1} module, imports)`);
-    return { source: src, lineOffset: linesAddedBefore };
+}
+    return { source: src, lineOffset: linesAddedBefore, containMain };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -549,8 +576,7 @@ app.post('/run', requireAuth, async (req, res) => {
                     await recordCacheMiss();
                     sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
 
-                    if (!validatorName) validatorName = findValidatorName(sourceCode) || 'mkValidator';
-                    const { source: augmented, lineOffset } = buildAugmentedSource(sourceCode, moduleName, jobId, validatorName);
+                    const { source: augmented, lineOffset, containMain } = buildAugmentedSource(sourceCode, moduleName, jobId, validatorName);
                     const lectureDir = `/app/code/wspace/lecture`;
                     const tmpSrc     = path.join(TMP_DIR, `Main_${jobId}.hs`);
                     fs.writeFileSync(tmpSrc, augmented);
@@ -572,7 +598,11 @@ docker exec plutus-runner bash -lc "
                     child.on('close', (exitCode) => {
                         if (fs.existsSync(tmpSrc)) fs.unlinkSync(tmpSrc);
                         finishJob(child);
-                        handleClose(res, exitCode, jobId, hash, displayFile);
+                        if (containMain) {
+                            handleCloseWithMain(res, exitCode, jobId, sourceCode, hash, displayFile);
+                        } else {
+                            handleClose(res, exitCode, jobId, hash, displayFile);
+                        }
                     });
                     req.on('close', () => { clearTimeout(jobTimeout); child.kill(); release(); });
                 })();
@@ -609,7 +639,7 @@ docker exec plutus-runner bash -lc "
     sendSSE(res, `> Cache miss — starting GHC...\n`, 'compilation');
 
     if (!validatorName) validatorName = findValidatorName(code) || 'mkValidator';
-    const { source: augmented, lineOffset } = buildAugmentedSource(code, moduleName, jobId, validatorName);
+    const { source: augmented, lineOffset, containMain } = buildAugmentedSource(code, moduleName, jobId, validatorName);
     const jobDir  = path.join(TMP_DIR, jobId);
     const tmpSrc  = path.join(jobDir, 'Main.hs');
     fs.mkdirSync(jobDir, { recursive: true });
@@ -635,7 +665,11 @@ docker exec plutus-runner bash -lc "
     child.on('close', (exitCode) => {
         try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch (_) {}
         finishJob(child);
-        handleClose(res, exitCode, jobId, hash, displayFile);
+        if (containMain) {
+            handleCloseWithMain(res, exitCode, jobId, code, hash, displayFile);
+        } else {
+            handleClose(res, exitCode, jobId, hash, displayFile);
+        }
     });
     child.on('error', (err) => {
         sendSSE(res, `Fatal Error: ${err.message}\n`, 'compilation');
@@ -658,11 +692,9 @@ function handleClose(res, exitCode, jobId, sourceHash = null, fileName = 'valida
                 try {
                     const parsed  = JSON.parse(stdout);
                     const cborHex = parsed.cborHex || stdout.trim();
-
                     sendSSE(res, cborHex, 'cbor');
                     sendSSE(res, "> CBOR generated successfully.\n", 'stdout');
-                    sendSSE(res, `/job/${jobId}/download`, 'download');  // URL téléchargement
-
+                    sendSSE(res, `/job/${jobId}/download`, 'download');
                     if (sourceHash) {
                         await setCache(sourceHash, cborHex);
                         const stats = await cacheStats();
@@ -697,6 +729,144 @@ function handleClose(res, exitCode, jobId, sourceHash = null, fileName = 'valida
 }
 
 // ══════════════════════════════════════════════════════════
+//  extractOutputPaths — Détecte les chemins écrits par main
+//  Cherche: writeFile "...", writeValidatorToFile "...",
+//           writePolicyEnvelope "...", LBS.writeFile "..."
+// ══════════════════════════════════════════════════════════
+function extractOutputPaths(sourceCode) {
+    const paths = [];
+    // Match: writeXxx "path/to/file.ext"  or  writeXxx "./assets/foo.plutus"
+    const regex = /write\w*\s+"([^"]+\.(?:plutus|json|cbor|txt))"/g;
+    let m;
+    while ((m = regex.exec(sourceCode)) !== null) {
+        // Normalize: strip leading ./ — paths are relative to /app/code/wspace
+        const p = m[1].replace(/^\.\//, '');
+        if (!paths.includes(p)) paths.push(p);
+    }
+    // Also catch LBS.writeFile "path" / System.IO.writeFile "path"
+    const regex2 = /writeFile\s+"([^"]+\.(?:plutus|json|cbor|txt))"/g;
+    while ((m = regex2.exec(sourceCode)) !== null) {
+        const p = m[1].replace(/^\.\//, '');
+        if (!paths.includes(p)) paths.push(p);
+    }
+    return paths;
+}
+
+// ══════════════════════════════════════════════════════════
+//  handleCloseWithMain — Quand le code a son propre main
+//  Lit tous les fichiers générés et les envoie au client
+// ══════════════════════════════════════════════════════════
+function handleCloseWithMain(res, exitCode, jobId, sourceCode, sourceHash, displayFile) {
+    if (exitCode !== null && exitCode !== 0) {
+        sendSSE(res, `\n> Build failed (exit code ${exitCode}).\n`, 'compilation');
+        recordJobFailure();
+        return endSSE(res);
+    }
+
+    // Trouver les fichiers que main() a générés
+    const outputPaths = extractOutputPaths(sourceCode);
+    const WSPACE = `/app/code/wspace`;
+
+    if (outputPaths.length === 0) {
+        // Aucun chemin détecté — lister assets/ pour trouver ce qui a été créé
+        exec(`docker exec plutus-runner find ${WSPACE}/assets -name "*.plutus" -o -name "*.json" 2>/dev/null`, async (err, out) => {
+            const found = (out || '').split('\n').map(s => s.trim()).filter(Boolean);
+            if (found.length === 0) {
+                sendSSE(res, `> Compilation successful. No .plutus file detected in assets/.\n`, 'stdout');
+                sendSSE(res, `> If your main writes elsewhere, add the path in writeValidatorToFile.\n`, 'stdout');
+            } else {
+                outputPaths.push(...found.map(f => f.replace(`${WSPACE}/`, '')));
+                await serveOutputFiles(res, jobId, outputPaths, WSPACE, sourceCode, sourceHash, displayFile);
+                return;
+            }
+            endSSE(res);
+        });
+        return;
+    }
+
+    serveOutputFiles(res, jobId, outputPaths, WSPACE, sourceCode, sourceHash, displayFile);
+}
+
+async function serveOutputFiles(res, jobId, outputPaths, WSPACE, sourceCode, sourceHash, displayFile) {
+    sendSSE(res, `> Generated files: ${outputPaths.join(', ')}\n`, 'stdout');
+
+    const artifacts = [];
+
+    for (const relPath of outputPaths) {
+        const fullPath = `${WSPACE}/${relPath}`;
+        const baseName = path.basename(relPath);
+
+        await new Promise((resolve) => {
+            exec(`docker exec plutus-runner cat "${fullPath}"`, { maxBuffer: 5 * 1024 * 1024 }, async (err, stdout) => {
+                if (err) {
+                    sendSSE(res, `> ⚠ Unable to read ${baseName}: ${err.message}\n`, 'compilation');
+                    return resolve();
+                }
+
+                try {
+                    const parsed  = JSON.parse(stdout);
+                    const cborHex = parsed.cborHex || stdout.trim();
+
+                    artifacts.push({ name: baseName, relPath, cborHex });
+
+                    // Premier fichier → afficher dans le panel CBOR
+                    if (artifacts.length === 1) {
+                        sendSSE(res, cborHex, 'cbor');
+                        sendSSE(res, `/job/${jobId}/download`, 'download');
+                    }
+
+                    sendSSE(res, `> ✓ ${baseName} extracted (${Math.round(cborHex.length / 2)} bytes)\n`, 'stdout');
+
+                    // Stocker dans Redis pour téléchargement ultérieur
+                    await storeJobArtifact(`${jobId}_${baseName}`, {
+                        cborHex,
+                        fileName:   baseName,
+                        compiledAt: new Date().toISOString(),
+                        fromCache:  false,
+                    });
+
+                } catch (_) {
+                    // Fichier texte brut (non-JSON)
+                    const raw = stdout.trim();
+                    artifacts.push({ name: baseName, relPath, cborHex: raw });
+                    if (artifacts.length === 1) {
+                        sendSSE(res, raw, 'cbor');
+                        sendSSE(res, `/job/${jobId}/download`, 'download');
+                    }
+                    sendSSE(res, `> ✓ ${baseName} read\n`, 'stdout');
+                    await storeJobArtifact(`${jobId}_${baseName}`, {
+                        cborHex:   raw,
+                        fileName:  baseName,
+                        compiledAt: new Date().toISOString(),
+                        fromCache:  false,
+                    });
+                }
+                resolve();
+            });
+        });
+    }
+
+    // Stocker le manifest complet du job (liste des fichiers)
+    await storeJobArtifact(jobId, {
+        cborHex:    artifacts[0]?.cborHex || '',
+        fileName:   displayFile,
+        compiledAt: new Date().toISOString(),
+        fromCache:  false,
+        files:      artifacts.map(a => ({ name: a.name, relPath: a.relPath })),
+    });
+
+    // Cache sur le premier artefact
+    if (sourceHash && artifacts[0]) {
+        await setCache(sourceHash, artifacts[0].cborHex);
+    }
+
+    // Notifier le client de la liste complète pour l'UI
+    sendSSE(res, JSON.stringify({ files: artifacts.map(a => ({ name: a.name, jobId })) }), 'files');
+
+    endSSE(res);
+}
+
+// ══════════════════════════════════════════════════════════
 //  TEMPLATES  (Outcome #69787)
 //  Deux templates embarqués : Vesting + ParameterizedVesting
 // ══════════════════════════════════════════════════════════
@@ -718,6 +888,108 @@ app.get('/templates/:id', requireAuth, (req, res) => {
     const t = TEMPLATES[req.params.id];
     if (!t) return res.status(404).json({ error: 'Template not found' });
     res.json({ id: req.params.id, ...t });
+});
+
+// ── AI Chat Endpoint ──
+app.post('/ai/chat', requireAuth, async (req, res) => {
+    const { message, code, language = 'haskell' } = req.body;
+
+    if (!message && !code)
+        return res.status(400).json({ error: 'Message or code is required' });
+
+    // ── Language detection ──
+    const userText  = message || '';
+    const frWords   = ['je','tu','il','nous','vous','ils','un','une','des','le','la','les',
+                       'est','sont','avec','pour','dans','sur','pas','que','qui','ce','en',
+                       'du','au','et','ou','mais','veux','faire','gestion','comment','quoi',
+                       'pourquoi','quel','quelle','comment','cest','ceci','cette'];
+    const isFrench  = userText.toLowerCase().split(/\s+/).filter(w => frWords.includes(w)).length >= 1;
+    const langInstr = isFrench
+        ? 'Réponds en français de manière claire et concise.'
+        : 'Reply in English clearly and concisely.';
+    const codeInstr = isFrench
+        ? 'Si tu génères du code Haskell/Plutus, utilise des blocs ```haskell. Code complet et compilable.'
+        : 'If you generate Haskell/Plutus code, use ```haskell blocks. Make it complete and compilable.';
+
+    // ── Build prompt ──
+    let prompt = '';
+    if (code) {
+        prompt = (isFrench ? 'Voici du code Haskell/Plutus:\n\n' : 'Here is some Haskell/Plutus code:\n\n')
+               + '```haskell\n' + code + '\n```\n\n';
+        if (message) prompt += (isFrench ? 'Question: ' : 'Question: ') + message + '\n\n';
+    } else {
+        prompt = message + '\n\n';
+    }
+    prompt += langInstr + ' ' + codeInstr;
+
+    // ── SSE headers — stream tokens as they arrive ──
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const sendToken = (token) => res.write('data: ' + JSON.stringify({ token }) + '\n\n');
+    const sendDone  = ()      => res.write('data: [DONE]\n\n');
+    const sendError = (msg)   => res.write('data: ' + JSON.stringify({ error: msg }) + '\n\n');
+
+    try {
+        // ── Ollama URL (normalize 0.0.0.0 → 127.0.0.1) ──
+        let ollamaBase = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+        if (!ollamaBase.startsWith('http')) ollamaBase = 'http://' + ollamaBase;
+        ollamaBase = ollamaBase.replace('0.0.0.0', '127.0.0.1').replace(/\/$/, '');
+        console.log('[AI] Streaming from:', ollamaBase);
+
+        const abortCtrl = new AbortController();
+        const timeout   = setTimeout(() => abortCtrl.abort(), 60_000); // 60s for 7b
+
+        const upstream = await fetch(ollamaBase + '/api/generate', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal:  abortCtrl.signal,
+            body: JSON.stringify({
+                model:  'qwen2.5-coder:7b',
+                prompt,
+                stream: true,
+                options: { temperature: 0.7, top_p: 0.9, num_predict: 1024, num_ctx: 4096 }
+            })
+        });
+
+        clearTimeout(timeout);
+
+        if (!upstream.ok) {
+            sendError('Ollama error ' + upstream.status);
+            return res.end();
+        }
+
+        // ── Pipe Ollama NDJSON stream → SSE tokens ──
+        const reader  = upstream.body.getReader();
+        const decoder = new TextDecoder();
+        let   buf     = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop(); // keep incomplete last line
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const obj = JSON.parse(line);
+                    if (obj.response) sendToken(obj.response);
+                    if (obj.done)     { sendDone(); return res.end(); }
+                } catch (_) {}
+            }
+        }
+        sendDone();
+        res.end();
+
+    } catch (err) {
+        console.error('[AI] Stream error:', err.message);
+        const isTimeout = err.name === 'AbortError';
+        sendError(isTimeout ? 'Timeout — model too slow' : 'AI error: ' + err.message);
+        res.end();
+    }
 });
 
 // ── Bootstrap ──

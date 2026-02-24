@@ -11,7 +11,8 @@
 import bcrypt from 'bcrypt';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { usersClient } from './redis.js';
+import { usersClient } from '../config/db.js';
+import { applyRateLimiter } from '../middleware.js';
 
 const __filename  = fileURLToPath(import.meta.url);
 const __dirname   = path.dirname(__filename);
@@ -51,15 +52,16 @@ export function requireAuth(req, res, next) {
 
 export function registerRoutes(app) {
 
+    app.use(applyRateLimiter)
     // Login page
     app.get('/login', (req, res) => {
         if (req.session && req.session.user) return res.redirect('/ide');
-        res.sendFile(path.join(__dirname, 'login.html'));
+        res.sendFile(path.join(__dirname, '../../frontend/login.html'));
     });
 
-    app.get('/register', (req, res) => {
+    app.get('/register',(req, res) => {
         if (req.session && req.session.user) return res.redirect('/ide');
-        res.sendFile(path.join(__dirname, 'login.html'));
+        res.sendFile(path.join(__dirname, '../../frontend/login.html'));
     });
 
     // Register
@@ -95,7 +97,7 @@ export function registerRoutes(app) {
     });
 
     // Login
-    app.post('/auth/login', async (req, res) => {
+    app.post('/auth/login',async (req, res) => {
         const { username, password } = req.body;
 
         if (!username || !password)
@@ -103,11 +105,11 @@ export function registerRoutes(app) {
 
         const user = await getUserByUsername(username);
         if (!user)
-            return res.status(401).json({ error: 'User not found' });
+            return res.status(401).json({ error: 'Incorrect user or password' });
 
         const valid = await bcrypt.compare(password, user.passwordHash);
         if (!valid)
-            return res.status(401).json({ error: 'Incorrect password' });
+            return res.status(401).json({ error: 'Incorrect user or password' });
 
         req.session.user = { id: user.id, username: user.username };
         res.json({ ok: true, username: user.username });

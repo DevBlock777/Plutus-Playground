@@ -1,8 +1,13 @@
 //  COMPILATION
 // ═══════════════════════════════════════════════════
 document.getElementById('runFileBtn').onclick = () => {
+    const code = window.editor.getValue()
     const vName = document.getElementById('validatorNameInput').value.trim();
-    if (!vName) return notify("Please enter a validator name in the toolbar input field.", 'warn');
+    if (!code.includes("main ::")){
+        alert("include")
+     if (!vName) return notify("Please enter a validator name in the toolbar input field.", 'warn');
+    }
+   
 
     if (templateMode) {
         // Template mode: compile editor content directly (no file, no save)
@@ -13,9 +18,12 @@ document.getElementById('runFileBtn').onclick = () => {
 };
 
 function runWorkspaceFile(fullPath, fileName) {
+    const code = window.editor.getValue()
     const vName = document.getElementById('validatorNameInput').value.trim();
-    if (!vName) return notify("Please enter a validator name in the toolbar input field.", 'warn');
-
+    if (!code.includes("main ::")){
+        alert("include")
+     if (!vName) return notify("Please enter a validator name in the toolbar input field.", 'warn');
+    }
     // Always save current editor content before compiling
     // Pass fullPath (e.g. "contracts/Three.hs") so the backend finds the file
     fetch('/workspace/save', {
@@ -68,6 +76,12 @@ async function runCode(body) {
                         const btn = document.getElementById('downloadBtn');
                         btn.dataset.url = output;
                         btn.disabled = false;
+                    } else if (type === 'files') {
+                        // Multi-file output (quand main() génère plusieurs .plutus)
+                        try {
+                            const { files } = JSON.parse(output);
+                            if (files && files.length > 1) showMultiFilePanel(files);
+                        } catch (_) {}
                     } else {
                         document.getElementById('std').textContent += output;
                         document.getElementById('std').scrollTop = document.getElementById('std').scrollHeight;
@@ -114,6 +128,8 @@ function switchTab(name) {
     document.querySelectorAll('.panel-body').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
     // Auto-switch to GHC tab when compilation starts
     if (name === 'logs') document.getElementById('logs').scrollTop = document.getElementById('logs').scrollHeight;
+    // Enable AI input when switching to AI tab
+    if (name === 'ai' && window.onAITabShown) window.onAITabShown();
 }
 function setStatus(msg, color) {
     document.getElementById('statusEl').textContent = msg;
@@ -246,6 +262,30 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
 });
 
 // ═══════════════════════════════════════════════════
+//  MULTI-FILE DOWNLOAD PANEL
+//  Affiché quand main() génère plusieurs .plutus
+// ═══════════════════════════════════════════════════
+function showMultiFilePanel(files) {
+    const old = document.getElementById('multiFilesPanel');
+    if (old) old.remove();
+
+    const panel = document.createElement('div');
+    panel.id        = 'multiFilesPanel';
+    panel.className = 'multi-files-panel';
+    panel.innerHTML =
+        `<div class="multi-files-title">📦 Fichiers générés (${files.length})</div>` +
+        files.map(f =>
+            `<a class="multi-file-link"
+                href="/job/${f.jobId}/file/${encodeURIComponent(f.name)}"
+                download="${f.name}">⬇ ${f.name}</a>`
+        ).join('');
+
+    const cborPanel = document.getElementById('tab-cbor');
+    if (cborPanel) cborPanel.appendChild(panel);
+    switchTab('cbor');
+}
+
+// ═══════════════════════════════════════════════════
 //  VERSION BADGE  (Outcome #69789)
 // ═══════════════════════════════════════════════════
 async function fetchAndShowVersion() {
@@ -270,11 +310,13 @@ function showVersions() {
 window.addEventListener('load', () => {
     loadTemplates();
     fetchAndShowVersion();
-    // Reset download btn on every new compile start
+    // Reset download btn + multi-file panel on every new compile start
     const origRunFileBtn = document.getElementById('runFileBtn');
     origRunFileBtn.addEventListener('click', () => {
         const btn = document.getElementById('downloadBtn');
         btn.disabled    = true;
         btn.dataset.url = '';
+        const old = document.getElementById('multiFilesPanel');
+        if (old) old.remove();
     }, true);
 });

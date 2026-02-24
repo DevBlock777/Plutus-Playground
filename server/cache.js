@@ -7,7 +7,7 @@
  */
 
 import crypto from 'crypto';
-import { cacheClient } from './redis.js';
+import { cacheClient } from './config/db.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60;   // 30 days
 const KEY_PREFIX  = 'cbor:';

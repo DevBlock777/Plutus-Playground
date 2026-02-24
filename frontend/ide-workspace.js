@@ -246,3 +246,12 @@ async function confirmDelete() {
     await refreshFiles();
     notify(`"${name}" deleted`, 'ok', 3000);
 }
+
+// ── Expose workspace state and functions globally ──
+// Required by ide-ai.js (loaded after this file)
+Object.defineProperty(window, 'currentSidebarPath', {
+    get: () => currentSidebarPath,
+    set: (v) => { currentSidebarPath = v; }
+});
+window.selectFile   = selectFile;
+window.refreshFiles = refreshFiles;

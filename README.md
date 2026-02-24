@@ -67,25 +67,37 @@ Access the IDE at `http://localhost:3000`.
 ```
 backend/
 ├── server/
-│   ├── auth.js          # Authentication and user management
+│   ├── auth/            # Authentication and user management
+│   ├── config/          # Database and configuration utilities
 │   ├── cache.js         # Compilation caching
+│   ├── constants.js     # Application constants
 │   ├── jobQueue.js      # Build queue and rate limiting
-│   ├── redis.js         # Redis utilities
+│   ├── middleware.js    # Express middleware
+│   ├── rag.js           # RAG (Retrieval-Augmented Generation) utilities
 │   ├── server.js        # Main Express server
 │   ├── templates.js     # Plutus contract templates
 │   └── utils.js         # Helper functions
 ├── frontend/
 │   ├── index.html       # Main IDE page
 │   ├── login.html       # Login page
-│   ├── ide-core.js      # Core IDE functionality
+│   ├── i18n.js          # Internationalization (English/French)
+│   ├── ide-ai.js        # AI assistant interface
 │   ├── ide-compile.js   # Compilation handling
+│   ├── ide-core.js      # Core IDE functionality
 │   ├── ide-styles.css   # CSS styles
 │   ├── ide-terminal.js  # Terminal interface
 │   └── ide-workspace.js # File and workspace management
+├── rag/                 # Plutus contract examples (Haskell)
 ├── sessions/            # Session storage
 ├── tmp/                 # Temporary files
 ├── workspaces/          # User workspaces
+├── Dockerfile.runner    # Docker configuration for Plutus runner
+├── cache.json           # Cache metadata
+├── documentation_en.md  # English documentation
+├── documentation_fr.md  # French documentation
 ├── package.json
+├── QWEN_FIX.md          # Qwen model fixes
+├── QWEN_SETUP.md        # Qwen setup instructions
 ├── README.md
 └── README_FR.md
 ```

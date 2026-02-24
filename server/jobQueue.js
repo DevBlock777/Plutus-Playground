@@ -13,15 +13,12 @@
  *   RATE_LIMIT_MAX         (défaut: 10 builds/min/user)
  */
 
-import { cacheClient } from './redis.js';
+import { cacheClient } from './config/db.js';
+import {MAX_CONCURRENT, MAX_QUEUE, JOB_TIMEOUT_MS, MAX_OUTPUT_MB, RATE_LIMIT_MAX, RATE_WINDOW_S} from './constants.js';
+
 
 // ── Config ──────────────────────────────────────────────────────
-export const MAX_CONCURRENT  = parseInt(process.env.MAX_CONCURRENT_BUILDS || '3');
-export const MAX_QUEUE       = parseInt(process.env.MAX_QUEUE_SIZE        || '20');
-export const JOB_TIMEOUT_MS  = parseInt(process.env.JOB_TIMEOUT_MS        || String(5 * 60 * 1000));
-export const MAX_OUTPUT_MB   = parseInt(process.env.MAX_OUTPUT_MB          || '10');
-export const RATE_LIMIT_MAX  = parseInt(process.env.RATE_LIMIT_MAX         || '10');
-export const RATE_WINDOW_S   = 60;
+
 
 // ── State interne ────────────────────────────────────────────────
 let activeJobs = 0;
@@ -81,13 +78,14 @@ function _makeRelease() {
 // ════════════════════════════════════════════════════
 
 export async function checkRateLimit(userId) {
-    const key = `ratelimit:run:${userId}`;
+    const key = `rate_limit:${userId}`
     try {
         const count = await cacheClient.incr(key);
         if (count === 1) await cacheClient.expire(key, RATE_WINDOW_S);
         return count <= RATE_LIMIT_MAX;
     } catch (_) {
-        return true; // fail open si Redis down
+        
+        return false; // fail open si Redis down
     }
 }
 
