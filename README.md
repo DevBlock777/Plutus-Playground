@@ -26,6 +26,43 @@ The project consists of a Node.js backend handling authentication, file manageme
 - Redis (for sessions and caching)
 - A configured `plutus-runner` Docker container
 
+## Tech Stack
+
+- **Backend**: Node.js, Express.js
+- **Frontend**: Vanilla JavaScript, HTML, CSS, Monaco Editor
+- **Database**: Redis (sessions and caching)
+- **Compilation**: Haskell, Plutus, Cabal, Nix (via Docker)
+- **Blockchain**: Cardano (Preprod testnet), Lucid library
+- **Containerization**: Docker
+
+## Repository
+
+This project is based on the forked repository: [Betsa777/plutus-nix](https://github.com/Betsa777/plutus-nix)
+
+## Docker Setup
+
+For a containerized development environment, use the provided `Dockerfile.runner` in the `plutus-nix` directory. This Docker image includes:
+
+- **Ubuntu 22.04** base
+- **Nix** with flakes and experimental features
+- **Haskell** and **Plutus** toolchain
+- **Redis** for database operations
+- Pre-built Plutus contracts
+
+### Build and Run Plutus Runner
+
+```bash
+# From the plutus-nix directory
+docker build -f Dockerfile.runner -t plutus-nix-runner .
+
+# Run the container
+docker run -p 8080:8080 plutus-nix-runner
+```
+
+The container exposes port 8080 for the Plutus Playground server. Adjust the port in the Dockerfile if needed.
+
+> 📝 **Note**: This setup is ideal for development and testing Plutus smart contracts without installing Nix locally.
+
 ## Installation
 
 1. Clone the repository:
